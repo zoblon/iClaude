@@ -521,3 +521,128 @@ export function authorizeFlags(r: FlagRequest): FlagGrant {
   if (r.flagged !== undefined) (r.flagged ? add : remove).push('\\Flagged');
   return FlagGrant.issue(r.sourcePaths, n, add, remove);
 }
+
+/* ------------------------------------------------------------------ */
+/* Apple Reminders and Notes (controlled on the Mac with JXA)          */
+/* ------------------------------------------------------------------ */
+
+export const MAX_COMPLETE_PER_CALL = 20;
+
+export type ReminderOp = 'create' | 'update' | 'complete';
+
+const reminderIssued = new WeakSet<ReminderGrant>();
+
+/**
+ * Permission to create, change or complete reminders. There is no grant for deleting reminders or lists: neither exists in the code.
+ * Apple's scripting interface does not tell whether a list is shared, so creating is only possible in a list that is named explicitly
+ * or in the default list; the grant carries the list name.
+ */
+export class ReminderGrant {
+  private constructor(
+    readonly op: ReminderOp,
+    /** For 'create': the target list; null means the default list of the Reminders app. */
+    readonly list: string | null,
+    readonly count: number,
+  ) {}
+
+  static issue(op: ReminderOp, list: string | null, count: number): ReminderGrant {
+    const g = new ReminderGrant(op, list, count);
+    reminderIssued.add(g);
+    return g;
+  }
+
+  static isValid(g: unknown, op: ReminderOp): g is ReminderGrant {
+    return g instanceof ReminderGrant && reminderIssued.has(g) && g.op === op;
+  }
+}
+
+export interface ReminderListFacts {
+  name: string;
+  isDefault: boolean;
+}
+
+/** A reminder is created in the list that is named, or (without a name) in the default list. */
+export function authorizeReminderCreate(r: { lists: ReminderListFacts[]; list?: string | undefined }): ReminderGrant {
+  const names = (l: ReminderListFacts[]) => l.map((x) => `"${x.name}"`).join(', ') || '(none)';
+  if (r.list !== undefined) {
+    const hits = r.lists.filter((x) => same(x.name, r.list!));
+    if (hits.length === 0) throw new UserError(`Reminder list "${r.list}" not found. Lists: ${names(r.lists)}.`);
+    if (hits.length > 1) throw new UserError(`Several reminder lists are called "${r.list}". Please rename one of them in Reminders.`);
+    return ReminderGrant.issue('create', hits[0]!.name, 1);
+  }
+  if (!r.lists.some((x) => x.isDefault)) {
+    throw new UserError(`The default list of Reminders could not be determined. Please name the list with "list". Lists: ${names(r.lists)}.`);
+  }
+  return ReminderGrant.issue('create', null, 1);
+}
+
+export function authorizeReminderUpdate(): ReminderGrant {
+  return ReminderGrant.issue('update', null, 1);
+}
+
+export function authorizeReminderComplete(count: number): ReminderGrant {
+  if (count === 0) throw new UserError('No reminder specified. Please name at least one reminder.');
+  if (count > MAX_COMPLETE_PER_CALL) {
+    throw new UserError(`Too many reminders at once (${count}, at most ${MAX_COMPLETE_PER_CALL} per call). Nothing was changed. Please split them into smaller groups.`);
+  }
+  return ReminderGrant.issue('complete', null, count);
+}
+
+const noteIssued = new WeakSet<NoteGrant>();
+
+/** Permission to create ONE new note in the given folder. There is no grant for changing, moving or deleting notes. */
+export class NoteGrant {
+  private constructor(
+    readonly folderId: string,
+    readonly folder: string,
+    readonly shared: boolean,
+  ) {}
+
+  static issue(folderId: string, folder: string, shared: boolean): NoteGrant {
+    const g = new NoteGrant(folderId, folder, shared);
+    noteIssued.add(g);
+    return g;
+  }
+
+  static isValid(g: unknown): g is NoteGrant {
+    return g instanceof NoteGrant && noteIssued.has(g);
+  }
+}
+
+export interface NoteFolderFacts {
+  id: string;
+  name: string;
+  account: string;
+  shared: boolean;
+}
+
+/**
+ * A note is created in the folder that is named, or without a name in the default folder of the default account.
+ * Shared folders (Notes tells us) only with sharedFolder naming the folder exactly.
+ */
+export function authorizeNoteCreate(r: { folders: NoteFolderFacts[]; defaultFolderId?: string | undefined; folder?: string | undefined; sharedFolder?: string | undefined }): NoteGrant {
+  if (r.folder !== undefined && r.sharedFolder !== undefined) throw new UserError('Please specify only one of "folder" (own folder) and "shared_folder" (shared folder).');
+  const names = (l: NoteFolderFacts[]) => l.map((x) => `"${x.name}"`).join(', ') || '(none)';
+  let target: NoteFolderFacts | undefined;
+  if (r.sharedFolder !== undefined) {
+    const hits = r.folders.filter((x) => same(x.name, r.sharedFolder!));
+    if (hits.length === 0) throw new UserError(`Folder "${r.sharedFolder}" not found. Shared folders: ${names(r.folders.filter((x) => x.shared))}.`);
+    if (hits.length > 1) throw new UserError(`Several folders are called "${r.sharedFolder}". Please rename one of them in Notes.`);
+    target = hits[0]!;
+    if (!target.shared) throw new UserError(`"${target.name}" is not a shared folder. Please use "folder" instead of "shared_folder".`);
+    return NoteGrant.issue(target.id, target.name, true);
+  }
+  if (r.folder !== undefined) {
+    const hits = r.folders.filter((x) => same(x.name, r.folder!));
+    if (hits.length === 0) throw new UserError(`Folder "${r.folder}" not found. Folders: ${names(r.folders)}.`);
+    if (hits.length > 1) throw new UserError(`Several folders are called "${r.folder}". Please rename one of them in Notes.`);
+    target = hits[0]!;
+  } else {
+    target = r.folders.find((x) => x.id === r.defaultFolderId);
+    if (!target) throw new UserError(`The default folder of Notes could not be determined. Please name the folder with "folder". Folders: ${names(r.folders)}.`);
+  }
+  if (target.shared) {
+    throw new UserError(`"${target.name}" is a shared folder. Notes there appear immediately for other people. If that is intended, name the folder explicitly with shared_folder="${target.name}".`);
+  }
+  return NoteGrant.issue(target.id, target.name, false);
+}

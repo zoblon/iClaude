@@ -183,6 +183,17 @@ Decisions (implemented, tested against test servers with the real `imapflow`, `t
   (the draft carries `\Seen`; checking the headers marks nothing). A new attempt with the mail in the Trash was refused, and so were 21 mails (without network access).
 - Recoverability of "about 30 days" in the Trash is taken from the original specification; it has not been measured.
 
+## Apple Reminders and Notes (0.4.0)
+
+iCloud offers no open interface for Reminders and Notes, so iClaude controls the two apps on the Mac with JavaScript for Automation (`/usr/bin/osascript -l JavaScript`). Measured on 2026-10-09 on a Mac with Claude Desktop; the data set was small (2 reminder lists, 13 reminders, an empty Notes account), so these numbers are a floor, not a promise.
+
+- **Permission:** the first call per app makes macOS ask "wants to control Reminders/Notes" (Automation). On this Mac the first call took 82 s (Reminders) and 77 s (Notes) until the question was answered; without an answer osascript fails after two minutes with `-1712`. The runner therefore allows 120 s for the first call per app and 30 s afterwards (a few scripts 60 s), and turns `-1743` into the way to System Settings > Privacy & Security > Automation.
+- **Input and output:** the script text is a constant; the input is ONE JSON argument that arrives in `function run(argv)` (verified: quotes, line breaks and `do shell script` text come back unchanged and run nothing, `test/automation.test.ts` does this against the real osascript on a Mac). The answer is one JSON text, validated with Zod.
+- **Speed:** every Apple event to **Reminders takes about 0.5 s**, whatever it asks for (reading `name` of 11 reminders in bulk: 0.5-0.6 s; reading it one reminder after the other: 11 x 0.5 s). Reading one property of ALL reminders of a list or of the whole app is one event, so scripts read a few properties as bulk arrays over `app.reminders` (or one list) and filter completion with `whose`. `whose({id: {_in: [...]}})` does not work; `whose({_or: [...]})` does. Reading a single property across the container works (`reminders.container.name()` returns all list names in one event).
+  Resulting times (end to end, including starting osascript): list the lists 2.4-2.7 s (with open counts), `list_reminders` 3.8-5.0 s, search 3.8 s. Writing: a title check by bulk read plus one event per change.
+- **Reminders properties:** `name`, `body`, `dueDate`, `alldayDueDate`, `remindMeDate`, `completed`, `completionDate`, `priority` (0 none, 1-4 high, 5 medium, 6-9 low), `flagged`, `creationDate`, `modificationDate`, `id` (`x-apple-reminder://UUID`), `container`. Lists have `name`, `id`, `color`, `emblem`, `container`; **there is no property that says whether a list is shared**. iClaude therefore only creates reminders in a list that is named explicitly or in the default list (`defaultList`).
+- **Notes properties:** folders have `shared` (boolean), `name`, `id`, `container`; accounts have `defaultFolder`. Writing into a shared folder therefore needs `shared_folder`.
+
 ## Claude Desktop: per-tool approval, installing over an existing version (researched 2026-10-08)
 
 - Anthropic's help articles describe approval levels for connector tools ("Always allow", "Needs approval", "Blocked") in the context of Cowork (selected via the plus menu or *Customize > Connectors*).

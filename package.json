@@ -1,6 +1,6 @@
 {
   "name": "icloud-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Local MCP server for iCloud Calendar, Contacts and Mail (Desktop Extension)",
   "license": "MIT",

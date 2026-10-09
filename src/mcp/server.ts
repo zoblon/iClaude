@@ -20,7 +20,10 @@ import { registerMailTools } from './mailTools.js';
 import { registerOrganizeTools } from './organizeTools.js';
 import { registerContactTools } from './contactTools.js';
 import { registerTrashTools } from './trashTools.js';
+import { OsascriptRunner } from '../core/automation/runner.js';
+import { JxaReminders, ReminderService } from '../core/reminders/service.js';
 import { registerImportTools } from './importTools.js';
+import { registerReminderTools } from './reminderTools.js';
 import { registerWriteTools } from './writeTools.js';
 
 const INSTRUCTIONS = [
@@ -33,7 +36,7 @@ const INSTRUCTIONS = [
 ].join(' ');
 
 export function createServer(cfg: Config): McpServer {
-  const server = new McpServer({ name: 'iClaude', version: '0.3.0' }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({ name: 'iClaude', version: '0.4.0' }, { instructions: INSTRUCTIONS });
   const dav = new CalDavGateway(cfg);
   registerCalendarTools(server, new CalendarService(cfg, dav));
   registerWriteTools(server, new CalendarWriteService(cfg, dav, new BackupStore({ dir: defaultBackupDir(), zone: cfg.timezone })));
@@ -46,6 +49,9 @@ export function createServer(cfg: Config): McpServer {
   registerDraftTools(server, new DraftService(cfg, imap, imap, () => mail.mailboxes()));
   registerTrashTools(server, new TrashService(imap, () => mail.mailboxes()));
   registerImportTools(server, new InvitationImportService(cfg, imap, dav));
+  // Apple Reminders and Notes are controlled on this Mac with JXA (osascript); one runner, one script at a time.
+  const runner = new OsascriptRunner();
+  registerReminderTools(server, new ReminderService(cfg, new JxaReminders(runner)));
   registerOrganizeTools(
     server,
     new MoveService(imap, () => mail.mailboxes(), (ref) => mail.resolveMailbox(ref), (path, mid) => imap.findRelated(path, [mid], 10)),
