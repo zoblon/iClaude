@@ -166,6 +166,26 @@
     {
       "name": "complete_reminder",
       "description": "Mark reminders completed or open again (at most 20; never deletes)"
+    },
+    {
+      "name": "list_note_folders",
+      "description": "List the folders of Apple Notes (shared flag, default folder)"
+    },
+    {
+      "name": "list_notes",
+      "description": "List notes (titles and dates, no content)"
+    },
+    {
+      "name": "search_notes",
+      "description": "Search notes by title, optionally by text"
+    },
+    {
+      "name": "get_note",
+      "description": "Read one note (text or Markdown, paged; locked notes are never opened)"
+    },
+    {
+      "name": "create_note",
+      "description": "Create a new note (never changes, moves or deletes existing notes)"
     }
   ],
   "tools_generated": false,

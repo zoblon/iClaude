@@ -23,7 +23,9 @@ import { registerTrashTools } from './trashTools.js';
 import { OsascriptRunner } from '../core/automation/runner.js';
 import { JxaReminders, ReminderService } from '../core/reminders/service.js';
 import { registerImportTools } from './importTools.js';
+import { registerNoteTools } from './noteTools.js';
 import { registerReminderTools } from './reminderTools.js';
+import { JxaNotes, NoteService } from '../core/notes/service.js';
 import { registerWriteTools } from './writeTools.js';
 
 const INSTRUCTIONS = [
@@ -52,6 +54,7 @@ export function createServer(cfg: Config): McpServer {
   // Apple Reminders and Notes are controlled on this Mac with JXA (osascript); one runner, one script at a time.
   const runner = new OsascriptRunner();
   registerReminderTools(server, new ReminderService(cfg, new JxaReminders(runner)));
+  registerNoteTools(server, new NoteService(cfg, new JxaNotes(runner)));
   registerOrganizeTools(
     server,
     new MoveService(imap, () => mail.mailboxes(), (ref) => mail.resolveMailbox(ref), (path, mid) => imap.findRelated(path, [mid], 10)),
