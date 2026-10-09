@@ -67,6 +67,7 @@ beforeEach(() => {
 describe('reading', () => {
   it('shows due dates in the configured time zone, date-only reminders as dates, and priorities in words', async () => {
     backend.items.push(raw(4, { alldayDue: '2026-10-21T22:00:00.000Z', priority: 5 }));
+    backend.items.push(raw(5, { due: '2026-10-22T22:00:00.000Z', alldayDue: '2026-10-22T22:00:00.000Z' }));
     const r = await svc.list({});
     const two = r.reminders.find((x) => x.title === 'Reminder 2')!;
     expect(two).toMatchObject({ due: '2026-10-20T14:30:00+02:00', dueHasTime: true, priority: 'high', list: 'Work' });
@@ -74,6 +75,8 @@ describe('reading', () => {
     expect(four.dueHasTime).toBe(false);
     expect(four.due).toMatch(/^2026-10-2[12]$/); // a local date of the Mac
     expect(four.priority).toBe('medium');
+    // dueDate and alldayDueDate are the same moment: a date without a time, as Reminders stores it
+    expect(r.reminders.find((x) => x.title === 'Reminder 5')!.dueHasTime).toBe(false);
     expect([0, 1, 4, 5, 6, 9].map(priorityOf)).toEqual(['none', 'high', 'high', 'medium', 'low', 'low']);
   });
 
@@ -94,8 +97,8 @@ describe('reading', () => {
 describe('create_reminder', () => {
   it('creates in the named list or, without a name, in the default list', async () => {
     const a = await svc.create({ title: ' Buy milk ', list: 'iclaude test', due: '2026-10-22T09:00:00', priority: 'high', notes: 'Oat' });
-    expect(backend.writes).toEqual(['create:iClaude Test']);
-    expect(a.reminder).toMatchObject({ title: 'Buy milk', list: 'iClaude Test', due: '2026-10-22T09:00:00+02:00', priority: 'high', notes: 'Oat' });
+    expect(backend.writes).toEqual(['create:iclaude test']); // the script finds the list ignoring case
+    expect(a.reminder).toMatchObject({ title: 'Buy milk', list: 'iclaude test', due: '2026-10-22T09:00:00+02:00', priority: 'high', notes: 'Oat' });
     await svc.create({ title: 'Default' });
     expect(backend.writes[1]).toBe('create:null');
   });
@@ -107,18 +110,11 @@ describe('create_reminder', () => {
     for (const bad of ['tomorrow', '2026-13-40', '22.10.2026', '']) expect(() => parseDue(bad, 'Europe/Berlin'), bad).toThrow();
   });
 
-  it('refuses unknown lists, empty titles, and writes nothing', async () => {
-    await expect(svc.create({ title: 'x', list: 'Nope' })).rejects.toThrow(/not found.*Lists: "Home", "Work", "iClaude Test"/);
+  it('refuses empty titles, bad dates and empty list names, and writes nothing', async () => {
     await expect(svc.create({ title: '  ' })).rejects.toThrow(/must not be empty/);
     await expect(svc.create({ title: 'x', due: 'garbage' })).rejects.toThrow(/invalid/);
-    expect(backend.writes).toEqual([]);
-  });
-
-  it('without a known default list it asks for a named list instead of guessing', async () => {
-    backend.lists_ = backend.lists_.map((l) => ({ ...l, isDefault: false }));
-    await expect(svc.create({ title: 'x' })).rejects.toThrow(/default list.*could not be determined/);
-    expect(backend.writes).toEqual([]);
-    await expect(svc.create({ title: 'x', list: 'Home' })).resolves.toBeTruthy();
+    await expect(svc.create({ title: 'x', list: '   ' })).resolves.toBeTruthy(); // a blank name counts as no name: the default list
+    expect(backend.writes).toEqual(['create:null']);
   });
 
   it('the schema takes no fields for deleting, sharing or the id', () => {
@@ -141,6 +137,7 @@ describe('update_reminder and complete_reminder', () => {
     await expect(svc.update({ id: 'bogus', title: 'x', newTitle: 'x' })).rejects.toThrow(/Invalid reminder ID/);
     await expect(svc.update({ id: id(1), title: 'Reminder 1' })).rejects.toThrow(/No change specified/);
     await expect(svc.update({ id: id(1), title: 'Reminder 1', newTitle: ' ' })).rejects.toThrow(/must not be empty/);
+    await expect(svc.update({ id: id(1), title: 'Reminder 1', due: '' })).rejects.toThrow(/Removing a due date is not possible/);
     expect(backend.items[0]!.title).toBe('Reminder 1');
     expect(backend.writes).toEqual([]);
   });
@@ -178,7 +175,7 @@ describe('rights', () => {
     const forged = { op: 'create', list: null, count: 1 } as never;
     await expect(be.create(forged, { title: 'x', notes: null, due: null, priority: null })).rejects.toThrow(/without a grant/);
     await expect(be.update(authorizeReminderComplete(1), { id: id(1), expectedTitle: 'x', patch: { title: 'x', notes: null, due: null, priority: null } })).rejects.toThrow(/without a grant/);
-    await expect(be.complete(authorizeReminderCreate({ lists: [{ name: 'Home', isDefault: true }] }), { items: [{ id: id(1), expectedTitle: 'x' }], completed: true })).rejects.toThrow(/without a grant/);
+    await expect(be.complete(authorizeReminderCreate({}), { items: [{ id: id(1), expectedTitle: 'x' }], completed: true })).rejects.toThrow(/without a grant/);
     expect(calls).toEqual([]);
   });
 
@@ -203,7 +200,7 @@ describe('rights', () => {
         return schema.parse(raw(5, { list: 'Work' }));
       },
     };
-    const grant = authorizeReminderCreate({ lists: [{ name: 'Home', isDefault: true }, { name: 'Work', isDefault: false }], list: 'work' });
+    const grant = authorizeReminderCreate({ list: ' Work ' });
     await new JxaReminders(runner).create(grant, { title: 'T', notes: null, due: null, priority: null });
     expect(seen).toEqual([['remindersCreate', { list: 'Work', title: 'T', notes: null, due: null, priority: null }]]);
   });

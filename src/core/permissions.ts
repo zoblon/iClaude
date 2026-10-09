@@ -556,22 +556,14 @@ export class ReminderGrant {
   }
 }
 
-export interface ReminderListFacts {
-  name: string;
-  isDefault: boolean;
-}
-
-/** A reminder is created in the list that is named, or (without a name) in the default list. */
-export function authorizeReminderCreate(r: { lists: ReminderListFacts[]; list?: string | undefined }): ReminderGrant {
-  const names = (l: ReminderListFacts[]) => l.map((x) => `"${x.name}"`).join(', ') || '(none)';
+/**
+ * A reminder is created in the list that is named, or (without a name) in the default list of the app. The script refuses a name that
+ * does not exist or is ambiguous before anything is written.
+ */
+export function authorizeReminderCreate(r: { list?: string | undefined }): ReminderGrant {
   if (r.list !== undefined) {
-    const hits = r.lists.filter((x) => same(x.name, r.list!));
-    if (hits.length === 0) throw new UserError(`Reminder list "${r.list}" not found. Lists: ${names(r.lists)}.`);
-    if (hits.length > 1) throw new UserError(`Several reminder lists are called "${r.list}". Please rename one of them in Reminders.`);
-    return ReminderGrant.issue('create', hits[0]!.name, 1);
-  }
-  if (!r.lists.some((x) => x.isDefault)) {
-    throw new UserError(`The default list of Reminders could not be determined. Please name the list with "list". Lists: ${names(r.lists)}.`);
+    if (!r.list.trim()) throw new UserError('The list name must not be empty.');
+    return ReminderGrant.issue('create', r.list.trim(), 1);
   }
   return ReminderGrant.issue('create', null, 1);
 }

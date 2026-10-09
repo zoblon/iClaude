@@ -12,11 +12,19 @@ function run(argv) {
   try {
     var input = JSON.parse(argv[0]);
     var app = Application('Notes');
-    var coll = input.folderId === null ? app.notes : app.folders.byId(input.folderId).notes;
+    // Bulk reads of a note's container do not work in Notes, so the folder names come from one read of the note ids per folder.
+    var folders = input.folderId === null ? app.folders() : [app.folders.byId(input.folderId)];
+    var folderOf = {};
+    for (var fi = 0; fi < folders.length; fi++) {
+      var fname = folders[fi].name();
+      var fids = folders[fi].notes.id();
+      for (var k = 0; k < fids.length; k++) folderOf[fids[k]] = fname;
+    }
+    var coll = input.folderId === null ? app.notes : folders[0].notes;
     var ids = coll.id();
     var items = [];
     if (ids.length > 0) {
-      var names = coll.name(), mods = coll.modificationDate(), creates = coll.creationDate(), locked = coll.passwordProtected(), folders = coll.container.name();
+      var names = coll.name(), mods = coll.modificationDate(), creates = coll.creationDate(), locked = coll.passwordProtected();
       var q = input.query ? String(input.query).toLowerCase() : null;
       var textHits = null;
       if (q !== null && input.inText) {
@@ -29,7 +37,7 @@ function run(argv) {
           var inTitle = String(names[i] || '').toLowerCase().indexOf(q) >= 0;
           if (!inTitle && !(textHits && textHits[ids[i]])) continue;
         }
-        items.push({ id: ids[i], title: names[i] || '', folder: folders[i] || '', locked: !!locked[i], modified: mods[i] ? mods[i].toISOString() : null, created: creates[i] ? creates[i].toISOString() : null });
+        items.push({ id: ids[i], title: names[i] || '', folder: folderOf[ids[i]] || '', locked: !!locked[i], modified: mods[i] ? mods[i].toISOString() : null, created: creates[i] ? creates[i].toISOString() : null });
       }
     }
     items.sort(function (a, b) { return String(b.modified || '').localeCompare(String(a.modified || '')); });

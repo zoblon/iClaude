@@ -2,7 +2,7 @@ import type { AutomationScript } from '../runner.js';
 
 /**
  * Changes ONE reminder: title, notes, due date, priority. `expectedTitle` is the title the caller saw; it must match (ignoring case and spacing),
- * otherwise nothing is changed. A due of false removes the due date, null leaves it. Returns before and after of every touched field. Never deletes anything.
+ * otherwise nothing is changed. A due of null leaves it (JXA cannot clear a due date; setting it to undefined writes the year 1903). Returns before and after of every touched field. Never deletes anything.
  */
 export const remindersUpdate: AutomationScript = {
   name: 'remindersUpdate',
@@ -32,10 +32,9 @@ function run(argv) {
     if (p.title !== null) { before.title = name; r.name = String(p.title); after.title = r.name(); }
     if (p.notes !== null) { before.notes = r.body() || ''; r.body = String(p.notes); after.notes = r.body() || ''; }
     if (p.priority !== null) { before.priority = r.priority() || 0; r.priority = p.priority; after.priority = r.priority() || 0; }
-    if (p.due === false || due !== null) {
+    if (due !== null) {
       before.due = dueState();
-      if (p.due === false) { r.dueDate = null; r.alldayDueDate = null; }
-      else if (due.at) { r.dueDate = due.at; }
+      if (due.at) { r.dueDate = due.at; }
       else { r.alldayDueDate = due.all; }
       after.due = dueState();
     }

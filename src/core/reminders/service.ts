@@ -9,7 +9,7 @@ import { remindersLists } from '../automation/scripts/remindersLists.js';
 import { remindersQuery } from '../automation/scripts/remindersQuery.js';
 import { remindersUpdate } from '../automation/scripts/remindersUpdate.js';
 import { AutomationRefusal, type ScriptRunner } from '../automation/runner.js';
-import { authorizeReminderComplete, authorizeReminderCreate, authorizeReminderUpdate, ReminderGrant, type ReminderListFacts } from '../permissions.js';
+import { authorizeReminderComplete, authorizeReminderCreate, authorizeReminderUpdate, ReminderGrant } from '../permissions.js';
 import { clip, sameText } from '../untrusted.js';
 
 const MAX_LIMIT = 100;
@@ -80,7 +80,7 @@ export interface ReminderBackend {
   query(a: { list: string | null; status: 'open' | 'completed' | 'all'; dueFrom: string | null; dueTo: string | null; text: string | null; limit: number }): Promise<{ total: number; items: RawReminder[] }>;
   get(ids: string[]): Promise<Array<RawBasic | null>>;
   create(grant: ReminderGrant, a: { title: string; notes: string | null; due: DueInput | null; priority: number | null }): Promise<RawReminder>;
-  update(grant: ReminderGrant, a: { id: string; expectedTitle: string; patch: { title: string | null; notes: string | null; due: DueInput | false | null; priority: number | null } }): Promise<UpdateOut>;
+  update(grant: ReminderGrant, a: { id: string; expectedTitle: string; patch: { title: string | null; notes: string | null; due: DueInput | null; priority: number | null } }): Promise<UpdateOut>;
   complete(grant: ReminderGrant, a: { items: Array<{ id: string; expectedTitle: string }>; completed: boolean }): Promise<{ changed: number }>;
 }
 
@@ -149,12 +149,15 @@ export class ReminderService {
     const zone = this.cfg.timezone;
     let due: string | undefined;
     let hasTime: boolean | undefined;
-    if (r.due) {
+    // Reminders stores a date-only reminder as local midnight in BOTH properties (dueDate and alldayDueDate are the same moment);
+    // a reminder with a time has an alldayDueDate at midnight of its day and a dueDate with the time.
+    const dateOnly = r.alldayDue !== null && (r.due === null || new Date(r.due).getTime() === new Date(r.alldayDue).getTime());
+    if (dateOnly) {
+      due = DateTime.fromISO(r.alldayDue!).setZone('system').toISODate() ?? undefined;
+      hasTime = false;
+    } else if (r.due) {
       due = DateTime.fromISO(r.due).setZone(zone).toISO({ suppressMilliseconds: true }) ?? undefined;
       hasTime = true;
-    } else if (r.alldayDue) {
-      due = DateTime.fromISO(r.alldayDue).setZone('system').toISODate() ?? undefined;
-      hasTime = false;
     }
     return {
       id: r.id,
@@ -201,8 +204,7 @@ export class ReminderService {
     if (!title) throw new UserError('The title must not be empty. Please provide a title.');
     const due = a.due?.trim() ? parseDue(a.due, this.cfg.timezone) : null;
     // Permissions first: without a grant nothing is written.
-    const lists = await this.backend.lists(false);
-    const grant = authorizeReminderCreate({ lists: lists as ReminderListFacts[], list: a.list?.trim() || undefined });
+    const grant = authorizeReminderCreate({ list: a.list?.trim() || undefined });
     const made = await this.backend.create(grant, { title, notes: a.notes?.trim() || null, due, priority: a.priority ? PRIORITY_VALUE[a.priority] : null });
     return { reminder: this.view(made), list: made.list };
   }
@@ -217,7 +219,10 @@ export class ReminderService {
     if (a.newTitle !== undefined && !a.newTitle.trim()) throw new UserError('The title must not be empty.');
     if (!a.title.trim()) throw new UserError('The title must not be empty. Please give the current title of the reminder as it is displayed.');
     this.checkId(a.id);
-    const due: DueInput | false | null = a.due === undefined ? null : a.due.trim() === '' ? false : parseDue(a.due, this.cfg.timezone);
+    if (a.due !== undefined && !a.due.trim()) {
+      throw new UserError('Removing a due date is not possible through Apple\'s scripting interface. Set a new due date instead, or remove it in the Reminders app.');
+    }
+    const due: DueInput | null = a.due === undefined ? null : parseDue(a.due, this.cfg.timezone);
     const grant = authorizeReminderUpdate();
     // The script compares the title (ignoring case and spacing) before it changes anything.
     const r = await this.backend.update(grant, {

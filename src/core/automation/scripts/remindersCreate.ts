@@ -31,21 +31,21 @@ function run(argv) {
     var back = app.reminders.byId(id);
     var d = back.dueDate(), a = back.alldayDueDate();
     return JSON.stringify({ ok: true, data: {
-      id: id, title: back.name() || '', notes: back.body() || '', list: back.container().name(), completed: !!back.completed(),
-      completionDate: null, due: d ? d.toISOString() : null, alldayDue: a ? a.toISOString() : null, priority: back.priority() || 0
+      id: id, title: back.name() || '', notes: props.body || '', list: back.container().name(), completed: false,
+      completionDate: null, due: d ? d.toISOString() : null, alldayDue: a ? a.toISOString() : null, priority: props.priority || 0
     } });
   } catch (e) {
     return fail(e);
   }
 }
 function findList(app, name) {
-  var lists = app.lists();
+  var names = app.lists.name();
   var want = String(name).trim().toLowerCase();
-  var hits = [];
-  for (var i = 0; i < lists.length; i++) if (String(lists[i].name()).trim().toLowerCase() === want) hits.push(lists[i]);
-  if (hits.length === 0) throw { code: 'LIST_NOT_FOUND', msg: 'No reminder list with this name.' };
-  if (hits.length > 1) throw { code: 'LIST_AMBIGUOUS', msg: 'Several reminder lists have this name.' };
-  return hits[0];
+  var idx = [];
+  for (var i = 0; i < names.length; i++) if (String(names[i]).trim().toLowerCase() === want) idx.push(i);
+  if (idx.length === 0) throw { code: 'LIST_NOT_FOUND', msg: 'No reminder list with this name.' };
+  if (idx.length > 1) throw { code: 'LIST_AMBIGUOUS', msg: 'Several reminder lists have this name.' };
+  return app.lists()[idx[0]];
 }
 function fail(e) {
   if (e && e.code && e.msg) return JSON.stringify({ ok: false, code: e.code, message: e.msg });

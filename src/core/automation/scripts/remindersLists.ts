@@ -9,14 +9,14 @@ function run(argv) {
   try {
     var input = JSON.parse(argv[0]);
     var app = Application('Reminders');
-    var lists = app.lists();
+    var ids = app.lists.id(), names = app.lists.name();
     var defaultId = null;
     try { defaultId = app.defaultList().id(); } catch (e) { defaultId = null; }
+    var lists = input.countOpen ? app.lists() : null;
     var out = [];
-    for (var i = 0; i < lists.length; i++) {
-      var l = lists[i];
-      var open = input.countOpen ? l.reminders.whose({ completed: false }).id().length : 0;
-      out.push({ id: l.id(), name: l.name(), open: open, isDefault: defaultId !== null && l.id() === defaultId });
+    for (var i = 0; i < ids.length; i++) {
+      var open = lists ? lists[i].reminders.whose({ completed: false }).id().length : 0;
+      out.push({ id: ids[i], name: names[i], open: open, isDefault: defaultId !== null && ids[i] === defaultId });
     }
     return JSON.stringify({ ok: true, data: out });
   } catch (e) {
