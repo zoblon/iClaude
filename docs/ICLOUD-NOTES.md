@@ -121,10 +121,21 @@ Without brackets (or with only the UUID), iCloud **silently returns 0 hits**, wh
 - The draft is placed via `APPEND` into the folder with `\Drafts` (here "Drafts"), with the flags `\Seen` and `\Draft`, as Apple Mail does for its own drafts.
   Without `\Seen`, every draft would be counted as an unread mail.
 - iCloud supports `UIDPLUS`: the response contains `APPENDUID`, from which the draft's ID is built (for `get_message`, `reply_to_id`).
-- The message is a simple UTF-8 plain-text mail (Base64). Subject and names are encoded according to RFC 2047. There is no Bcc and there are no attachments.
+- The message is a simple UTF-8 plain-text mail (Base64). Subject and names are encoded according to RFC 2047. There is no Bcc. Attachments exist only in forward drafts (see "Attachments, moving, flags and forwarding (0.3.0)").
 - Measured live (test drafts to the own address): text, subject with umlauts and emoji, sender, recipient and the reply linkage
   (`In-Reply-To`, `References`) come back from iCloud unchanged. Drafts don't count as unread.
 - A connection drop during `APPEND` is **not** retried, so that two drafts are never created.
+
+## Attachments, moving, flags and forwarding (0.3.0)
+
+Implemented and tested against the simulated IMAP server with the real `imapflow` (`test/attachments.test.ts`, `test/organize.test.ts`, `test/forward.test.ts`). **Not yet measured against iCloud** unless stated below.
+
+- **Attachment IDs** are the IMAP body part numbers from `BODYSTRUCTURE` ("2", "2.1"), which `imapflow` delivers with the other fetch data. The list contains leaves that are marked as attachments, have a file name, or are not text (images etc.); the plain body text is not listed. Sizes are the decoded sizes estimated from the encoded size.
+- **Reading an attachment** fetches `BODY.PEEK[<part>]` with `imapflow`'s `bodyParts` (folder opened with `EXAMINE`) and decodes Base64 and quoted-printable itself. The size is checked against the 15 MB limit from `BODYSTRUCTURE` before anything is downloaded.
+- **PDF text** comes from `unpdf` (pdf.js bundled, MIT, no network access, no scripts); it adds about 2.4 MB to the unpacked bundle. A PDF whose pages yield fewer than 10 non-blank characters is reported as having no text layer.
+- **Moving** reuses the direct `UID MOVE` (iCloud does not advertise `MOVE` but understands it). The new IDs come from the `COPYUID` response code (read through `imapflow`'s `exec` with an `untagged` handler); if the server doesn't send it, the new ID is looked up by Message-ID in the target folder. Whether iCloud sends `COPYUID` for `UID MOVE` has to be confirmed live. Folder names in the command are sent in modified UTF-7.
+- **Flags** are changed with `imapflow`'s `messageFlagsAdd`/`messageFlagsRemove` (`UID STORE +FLAGS.SILENT`/`-FLAGS.SILENT`), only `\Seen` and `\Flagged`, in a folder opened read-write only for that call.
+- **Forwarding** builds `multipart/mixed`: a Base64 UTF-8 text part and one Base64 part per attachment. File names: ASCII as a quoted parameter; others as an RFC 2231 extended parameter (`filename*0*=UTF-8''…`, continuations after about 40 characters) plus an RFC 2047 encoded word in the plain parameter as fallback. The forward block follows Apple Mail ("Begin forwarded message:", From, Subject, Date, To, Cc). A last check parses the built message and compares attachment count, names and sizes before anything is appended; the append timeout grows with the size (8 s per MB).
 
 ## Deleting events (0.2.0)
 

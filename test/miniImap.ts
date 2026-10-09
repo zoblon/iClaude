@@ -23,7 +23,7 @@ export interface MiniBox {
   messages: MiniMessage[];
 }
 
-const MUTATING = /^(STORE|COPY|APPEND|EXPUNGE|DELETE|CREATE|RENAME|SUBSCRIBE|UNSUBSCRIBE|SETACL|SETQUOTA|REPLACE)$/i;
+const MUTATING = /^(COPY|APPEND|EXPUNGE|DELETE|CREATE|RENAME|SUBSCRIBE|UNSUBSCRIBE|SETACL|SETQUOTA|REPLACE)$/i;
 
 const q = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
@@ -38,7 +38,78 @@ function envelope(m: MiniMessage, inReplyTo?: string): string {
   return `(${q(m.date)} ${q(m.subject)} ${addr(m.from)} ${addr(m.from)} ${addr(m.from)} ${addr('Me <me@icloud.com>')} NIL NIL ${inReplyTo ? q(inReplyTo) : 'NIL'} ${q(m.messageId)})`;
 }
 
+/* ---- A small MIME parser: real multipart messages get a correct BODYSTRUCTURE and addressable parts ---- */
+
+interface MimeNode {
+  part: string;
+  type: string;
+  subtype: string;
+  params: Record<string, string>;
+  encoding: string;
+  disposition?: string;
+  filename?: string;
+  body: string;
+  children: MimeNode[];
+}
+
+function paramsOf(value: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of value.matchAll(/;\s*([\w*-]+)\s*=\s*(?:"([^"]*)"|([^;\s]+))/g)) out[m[1]!.toLowerCase()] = m[2] ?? m[3] ?? '';
+  return out;
+}
+
+export function parseMime(raw: string, part = ''): MimeNode {
+  const i = raw.indexOf('\r\n\r\n');
+  const head = (i >= 0 ? raw.slice(0, i) : raw).replace(/\r\n[ \t]+/g, ' ');
+  const body = i >= 0 ? raw.slice(i + 4) : '';
+  const h = (n: string) => new RegExp(`^${n}:[ \\t]*(.*)$`, 'im').exec(head)?.[1]?.trim() ?? '';
+  const ct = h('Content-Type') || 'text/plain';
+  const [mime = 'text/plain'] = ct.split(';');
+  const [type = 'text', subtype = 'plain'] = mime.trim().toLowerCase().split('/');
+  const params = paramsOf(ct);
+  const cd = h('Content-Disposition');
+  const node: MimeNode = {
+    part,
+    type,
+    subtype,
+    params,
+    encoding: (h('Content-Transfer-Encoding') || '7bit').toLowerCase(),
+    ...(cd ? { disposition: cd.split(';')[0]!.trim().toLowerCase() } : {}),
+    ...(cd && paramsOf(cd).filename ? { filename: paramsOf(cd).filename! } : {}),
+    body,
+    children: [],
+  };
+  if (type === 'multipart' && params.boundary) {
+    const marker = `--${params.boundary}`;
+    const chunks = body.split(marker).slice(1).filter((c) => !c.startsWith('--'));
+    node.children = chunks.map((c, k) => parseMime(c.replace(/^\r\n/, '').replace(/\r\n$/, ''), `${part}${part ? '.' : ''}${k + 1}`));
+  }
+  return node;
+}
+
+const isMultipartRaw = (raw: string) => /^Content-Type:\s*multipart\//im.test(raw.slice(0, raw.indexOf('\r\n\r\n') >= 0 ? raw.indexOf('\r\n\r\n') : raw.length));
+
+function structureOf(n: MimeNode): string {
+  const params = Object.entries(n.params).filter(([k]) => k !== 'boundary' || n.type === 'multipart');
+  const plist = params.length ? `(${params.map(([k, v]) => `${q(k.toUpperCase())} ${q(v)}`).join(' ')})` : 'NIL';
+  if (n.type === 'multipart') return `(${n.children.map(structureOf).join('')} ${q(n.subtype.toUpperCase())} ${plist} NIL NIL)`;
+  const disp = n.disposition ? `(${q(n.disposition.toUpperCase())} ${n.filename ? `(${q('FILENAME')} ${q(n.filename)})` : 'NIL'})` : 'NIL';
+  const size = Buffer.byteLength(n.body);
+  const lines = n.type === 'text' ? ` ${n.body.split('\n').length}` : '';
+  return `(${q(n.type.toUpperCase())} ${q(n.subtype.toUpperCase())} ${plist} NIL NIL ${q(n.encoding.toUpperCase())} ${size}${lines} NIL ${disp} NIL)`;
+}
+
+function findPart(n: MimeNode, part: string): MimeNode | undefined {
+  if ((n.part || '1') === part && n.type !== 'multipart') return n;
+  for (const c of n.children) {
+    const hit = findPart(c, part);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 function bodyStructure(m: MiniMessage): string {
+  if (isMultipartRaw(m.raw)) return structureOf(parseMime(m.raw));
   const text = '("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 100 5 NIL NIL NIL)';
   if (!m.attachment) return text;
   return `(${text}("APPLICATION" "PDF" ("NAME" "invoice.pdf") NIL NIL "BASE64" 1000 NIL ("ATTACHMENT" ("FILENAME" "invoice.pdf")) NIL) "MIXED" ("BOUNDARY" "b") NIL NIL)`;
@@ -69,6 +140,10 @@ export class MiniImap {
   allowMove = new Set<string>();
   /** Successfully executed moves. */
   moves: Array<{ from: string; to: string; uids: number[] }> = [];
+  /** Flags that STORE may set or clear (empty = every STORE is a violation). */
+  allowStoreFlags = new Set<string>();
+  /** Successfully executed STOREs. */
+  stores: Array<{ box: string; uids: number[]; op: '+' | '-'; flags: string[] }> = [];
   private server?: net.Server;
   port = 0;
 
@@ -81,7 +156,7 @@ export class MiniImap {
    */
   constructor(
     public boxes: Record<string, MiniBox>,
-    private readonly opts: { move?: boolean; advertiseMove?: boolean } = {},
+    private readonly opts: { move?: boolean; advertiseMove?: boolean; noCopyUid?: boolean } = {},
   ) {}
 
   private get caps(): string {
@@ -193,9 +268,28 @@ export class MiniImap {
           });
           src.messages = src.messages.filter((x) => !picks.includes(x));
           this.moves.push({ from: selected.name, to: dest, uids: picks.map((x) => x.uid) });
-          send(`* OK [COPYUID ${target.uidValidity} ${picks.map((x) => x.uid).join(',')} ${dstUids.join(',')}] moved\r\n`);
+          if (!this.opts.noCopyUid) send(`* OK [COPYUID ${target.uidValidity} ${picks.map((x) => x.uid).join(',')} ${dstUids.join(',')}] moved\r\n`);
           for (const n of seqs.sort((a, b) => b - a)) send(`* ${n} EXPUNGE\r\n`);
           return ok('MOVE completed');
+        }
+        case 'STORE': {
+          const st = /^(\S+)\s+([+-]?)FLAGS(\.SILENT)?\s+\(?([^)]*)\)?\s*$/i.exec(args);
+          if (!selected || !st) return send(`${tag} BAD cannot parse\r\n`);
+          const flags = st[4]!.split(/\s+/).filter(Boolean);
+          if (selected.readOnly || !this.allowWriteSelect.has(selected.name) || !st[2] || flags.some((f) => !this.allowStoreFlags.has(f))) {
+            this.violations.push(`${byUid ? 'UID ' : ''}STORE ${args}`);
+            return send(`${tag} NO not allowed in test\r\n`);
+          }
+          const b = this.boxes[selected.name]!;
+          const picks = (byUid ? expand(st[1]!, Math.max(0, ...b.messages.map((x) => x.uid))) : expand(st[1]!, b.messages.length))
+            .map((n) => (byUid ? b.messages.find((x) => x.uid === n) : b.messages[n - 1]))
+            .filter((x): x is MiniMessage => Boolean(x));
+          for (const msg of picks) {
+            msg.flags = st[2] === '+' ? [...new Set([...msg.flags, ...flags])] : msg.flags.filter((f) => !flags.includes(f));
+            if (!st[3]) send(`* ${b.messages.indexOf(msg) + 1} FETCH (UID ${msg.uid} FLAGS (${msg.flags.join(' ')}))\r\n`);
+          }
+          this.stores.push({ box: selected.name, uids: picks.map((x) => x.uid), op: st[2] as '+' | '-', flags });
+          return ok('STORE completed');
         }
         case 'CLOSE':
         case 'UNSELECT':
@@ -263,6 +357,11 @@ export class MiniImap {
             }
             let out = `* ${seq} FETCH (${parts.join(' ')}`;
             if (literal !== undefined) out += ` ${literalKey} {${Buffer.byteLength(literal)}}\r\n${literal}`;
+            for (const pm of attrs.matchAll(/BODY(?:\.PEEK)?\[(\d+(?:\.\d+)*)\]/gi)) {
+              const node = findPart(parseMime(msg.raw), pm[1]!);
+              const content = node?.body.replace(/\r\n$/, '') ?? '';
+              out += ` BODY[${pm[1]}] {${Buffer.byteLength(content)}}\r\n${content}`;
+            }
             send(`${out})\r\n`);
           }
           return ok();

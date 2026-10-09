@@ -69,7 +69,7 @@ Hinweise:
    | Default calendar for new events | Name eines **privaten Termin-Kalenders**, zum Beispiel `Termine`. Keine Erinnerungsliste und kein geteilter Kalender. Leer lassen geht auch, dann muss jeder neue Termin einen Kalender nennen. |
 
 4. Die Erweiterung einschalten.
-5. **Die Löschwerkzeuge und `update_contact` auf »Nachfragen« stellen:** unter *Einstellungen → Erweiterungen* (je nach Version *Anpassen → Konnektoren*) bei **iClaude** die Werkzeuge `delete_event`, `trash_message` und `update_contact`. Dann fragt Claude vor jedem Löschen oder Ändern eines Kontakts nach und zeigt Titel und Startzeit, Betreff und Absender bzw. den Namen des Kontakts.
+5. **Die Löschwerkzeuge, `update_contact`, `move_message` und `set_message_flags` auf »Nachfragen« stellen:** unter *Einstellungen → Erweiterungen* (je nach Version *Anpassen → Konnektoren*) bei **iClaude** die Werkzeuge `delete_event`, `trash_message`, `update_contact`, `move_message` und `set_message_flags`. Dann fragt Claude vor jedem Löschen, Ändern eines Kontakts, Verschieben oder Markieren nach und zeigt Titel und Startzeit, Betreff und Absender bzw. den Namen des Kontakts.
 6. Testen, zum Beispiel mit »Welche Kalender siehst du?« und »Was steht diese Woche an?«. Geteilte Kalender sind in der Antwort als geteilt markiert.
 
 ## Werkzeuge
@@ -82,8 +82,10 @@ Hinweise:
 | `search_contacts`, `get_contact`, `list_contact_groups`, `upcoming_contact_dates` | Kontakte, Gruppen und anstehende Geburtstage und Jahrestage lesen | nur lesen |
 | `create_contact` | einen Kontakt anlegen (prüft vorher auf Dubletten) | schreiben; ändert nie vorhandene Kontakte |
 | **`update_contact`** | einen Kontakt ändern | **schreiben**, vorher `.vcf`-Sicherung (siehe unten) |
-| `list_mailboxes`, `unread_counts`, `list_recent`, `search_messages`, `get_message`, `get_thread` | Mail lesen, nichts wird als gelesen markiert | nur lesen |
-| `create_draft` | Entwurf oder Antwort-Entwurf anlegen | schreiben, nur im Ordner »Entwürfe« |
+| `list_mailboxes`, `unread_counts`, `list_recent`, `search_messages`, `get_message`, `get_thread`, `read_attachment` | Mail und Anhänge lesen (Text, PDF-Text, Kalendereinladungen), nichts wird als gelesen markiert | nur lesen |
+| `create_draft` | Entwurf, Antwort-Entwurf oder Weiterleitungs-Entwurf (mit den Anhängen der Originalmail) anlegen | schreiben, nur im Ordner »Entwürfe« |
+| **`move_message`** | Mails in einen anderen Ordner verschieben (nicht Papierkorb, Entwürfe, Gesendet, Junk) | **verschieben** (siehe unten) |
+| **`set_message_flags`** | Mails als gelesen/ungelesen oder markiert/nicht markiert setzen | **schreiben**, nur diese beiden Markierungen |
 | **`trash_message`** | Mails in den Papierkorb verschieben | **verschieben** (siehe unten) |
 
 Termine mit Teilnehmern oder von anderen organisierte Termine werden nie geändert. Bei Serien lässt sich nur die ganze Serie ändern oder löschen, keine einzelnen Vorkommen.
@@ -124,6 +126,13 @@ Höchstens 20 Mails pro Aufruf.
   Lehnt ein Server `UID MOVE` ab, passiert nichts. Einen Ausweg über Löschmarkierung und `EXPUNGE` gibt es nicht.
 - Mails, die schon im Papierkorb liegen, werden nie angefasst. Ein endgültiges Löschen gibt es nicht.
 
+### `read_attachment`, `move_message`, `set_message_flags` und Weiterleiten
+
+- **`read_attachment`** (`id` der Mail, `attachment_id` aus `get_message`, optional `offset` für lange Texte) lädt nur diesen einen Anhang (höchstens 15 MB, `BODY.PEEK`, nichts wird als gelesen markiert). Gelesen werden Textdateien (auch CSV, HTML als Markdown), PDFs (der Text wird auf deinem Mac ausgelesen, ohne Netzwerk; ein gescanntes PDF ohne Textebene wird als solches gemeldet, es gibt kein OCR) und Kalendereinladungen (`.ics`: Titel, Beginn, Ende, Ort, Organisator, Methode, Wiederholung, Beschreibung). Bilder, Office-Dateien und ZIP-Dateien liefern nur Metadaten.
+- **`move_message`** verschiebt bis zu 50 Mails in einen Ordner (Pfad, Name oder die Rolle `archive`). Pro Mail Pflicht: `id`, `subject` und `from`; passt eine nicht, wird **nichts** verschoben. Ziel darf nicht der Papierkorb sein (dafür gibt es `trash_message`), nicht Entwürfe, Gesendet oder Junk und nicht der Ordner, in dem die Mail schon liegt. Verschoben wird mit einem direkten IMAP-`UID MOVE`, ohne Ausweg. Das Ergebnis nennt die neue ID und den neuen Ordner jeder Mail, damit sich das Verschieben rückgängig machen lässt.
+- **`set_message_flags`** setzt bis zu 50 Mails auf gelesen/ungelesen und/oder markiert/nicht markiert (`\Seen` und `\Flagged` sind die einzigen Markierungen, die der Code setzen kann). Gleiche Prüfung von `id`, `subject` und `from`; das Ergebnis zeigt den vorherigen Zustand.
+- **Weiterleiten:** `create_draft` mit `forward_of_id` legt einen Entwurf »Fwd: …« an, mit Weiterleitungsblock im Stil von Apple Mail (Von, Betreff, Datum, An) und dem Text der Originalmail (`quote: false`: nur der Block). Die Anhänge der Originalmail werden mitgenommen, standardmäßig alle oder die in `forward_attachment_ids` genannten, insgesamt höchstens 20 MB. Es bleibt ein Entwurf im Ordner »Entwürfe«; gesendet wird von dir.
+
 ## Nutzung vom Handy und in geplanten Aufgaben
 
 Der Konnektor läuft **auf deinem Mac**, als Teil von Claude Desktop. Er ist also nur erreichbar, wenn der Mac wach ist und Claude Desktop läuft. Einen Server im Internet, der stellvertretend einspringt, gibt es nicht.
@@ -143,7 +152,7 @@ Für dieses Projekt heißt das: Lesen, Termine anlegen und Entwürfe funktionier
 
 1. Die neue `.mcpb` von der Release-Seite herunterladen und wie bei der Installation per Doppelklick öffnen. Die Erweiterung behält ihre interne Kennung (`icloud-connector`), es entsteht also keine zweite Erweiterung.
 2. Unter *Einstellungen → Erweiterungen* prüfen, ob die Felder noch gefüllt sind. **Anthropic dokumentiert nicht, ob die Einstellungen beim Überinstallieren erhalten bleiben.** Claude Desktop speichert sie zwar getrennt von den Programmdateien, halte zur Sicherheit aber das App-Passwort bereit oder erstelle ein neues.
-3. Die Freigaben prüfen: `delete_event` und `trash_message` auf »Nachfragen«, neu hinzugekommene Werkzeuge bewusst einstellen.
+3. Die Freigaben prüfen: `delete_event`, `trash_message`, `update_contact`, `move_message` und `set_message_flags` auf »Nachfragen«, neu hinzugekommene Werkzeuge bewusst einstellen.
 
 Seit Version 0.2.1 heißt die Erweiterung in Claude Desktop **iClaude**, vorher »iCloud: Kalender, Kontakte, Mail«. Gespeicherte Aufgaben oder Anweisungen, die den alten Namen nennen, bitte anpassen.
 

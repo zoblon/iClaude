@@ -5,6 +5,7 @@ import { CalDavGateway, classifyCalendar } from '../src/core/calendar/caldav.js'
 import { CalendarWriteService } from '../src/core/calendar/writeService.js';
 import { calendars, cfg, ev, FakeStore } from './fakeStore.js';
 import { createEventSchema, updateEventSchema } from '../src/mcp/writeTools.js';
+import { ALLOWED_STORE_FLAGS, authorizeFlags, FlagGrant } from '../src/core/permissions.js';
 
 let store: FakeStore;
 let svc: CalendarWriteService;
@@ -279,18 +280,18 @@ describe('Deleting, sending and moving in the code: only the two allowed paths',
   const src = files('src').map((f) => ({ f: f.split('\\').join('/'), text: readFileSync(f, 'utf8') }));
   const code = src.map(({ f, text }) => ({ f, code: strip(text) }));
 
-  it('only delete_event and trash_message have delete/move names; there is no other tool of this kind', () => {
+  it('only delete_event, trash_message, move_message and set_message_flags have delete/move/flag names; there is no other tool of this kind', () => {
     const names = src.flatMap(({ text }) => [...text.matchAll(/registerTool\(\s*'([^']+)'/g)].map((m) => m[1]!));
     expect(names).toEqual(expect.arrayContaining(['list_calendars', 'list_events', 'search_events', 'find_free_slots', 'create_event', 'update_event', 'search_contacts', 'get_contact', 'delete_event', 'trash_message']));
     const risky = names.filter((n) => /delete|remove|cancel|send|move|mark|flag|archive|trash|expunge|forward|reply/i.test(n));
-    expect(risky.sort()).toEqual(['delete_event', 'trash_message']);
+    expect(risky.sort()).toEqual(['delete_event', 'move_message', 'set_message_flags', 'trash_message']);
   });
 
   it('forbidden functions appear nowhere in the code (no sending, no deleting contacts, no flags, no EXPUNGE, no COPY fallback)', () => {
     const forbidden = [
       /deleteCalendarObject/, /deleteVCard/, /\bcreateVCard\b/, /\bupdateVCard\b/,
       /createTransport/, /sendMail/, /from 'nodemailer'/, /smtp/i,
-      /messageDelete/, /messageCopy/, /messageFlags(Add|Remove|Set)/, /\.setFlagColor/, /mailboxDelete/, /mailboxRename/, /\.expunge/i, /\bEXPUNGE\b/,
+      /messageDelete/, /messageCopy/, /messageFlagsSet/, /\.setFlagColor/, /mailboxDelete/, /mailboxRename/, /\.expunge/i, /\bEXPUNGE\b/,
     ];
     for (const { f, code: c } of code) for (const re of forbidden) expect(c, `${f}: ${re}`).not.toMatch(re);
     // The \\Deleted flag only appears in the tool description ("does not set it"), never in the rest of the code.
@@ -320,12 +321,52 @@ describe('Deleting, sending and moving in the code: only the two allowed paths',
     }
     const imap = code.find((x) => x.f === 'src/core/mail/imap.ts')!.code;
     expect([...imap.matchAll(/exec\(\s*'([A-Z][^']*)'/g)].map((m) => m[1])).toEqual(['UID MOVE']); // exactly one call
-    const fn = imap.slice(imap.indexOf('async moveToTrash'), imap.indexOf('async close'));
-    expect(fn).toContain("TrashGrant.isValid(grant)");
-    expect(fn.indexOf('TrashGrant.isValid(grant)')).toBeLessThan(fn.indexOf("w.exec('UID MOVE'"));
+    // The single MOVE sits in the private uidMove, which only moveToTrash and moveMessages call, each after its own grant check.
+    const move = imap.slice(imap.indexOf('private async uidMove'), imap.indexOf('async setFlags'));
+    expect(move).toMatch(/w\.exec\(\s*'UID MOVE'/);
+    expect(imap.indexOf("w.exec(")).toBeGreaterThan(imap.indexOf('private async uidMove'));
+    expect(imap.indexOf("w.exec(")).toBeLessThan(imap.indexOf('async setFlags'));
+    const calls = [...imap.matchAll(/this\.uidMove\(/g)].length;
+    expect(calls).toBe(2);
+    const trash = imap.slice(imap.indexOf('async moveToTrash'), imap.indexOf('async moveMessages'));
+    expect(trash).toContain('TrashGrant.isValid(grant)');
+    expect(trash.indexOf('TrashGrant.isValid(grant)')).toBeLessThan(trash.indexOf('this.uidMove('));
+    const moveMsg = imap.slice(imap.indexOf('async moveMessages'), imap.indexOf('private async uidMove'));
+    expect(moveMsg.indexOf('MoveGrant.isValid(grant)')).toBeGreaterThan(-1);
+    expect(moveMsg.indexOf('MoveGrant.isValid(grant)')).toBeLessThan(moveMsg.indexOf('this.uidMove('));
+    expect(imap).toContain('private async uidMove');
     // The narrow read interface has no mutating methods.
     const like = imap.slice(imap.indexOf('export interface ImapLike'), imap.indexOf('interface ImapAppend'));
     expect(like).not.toMatch(/messageMove|messageDelete|append|messageFlags|store\(|exec\(/);
+  });
+
+  it('STORE: only \\Seen and \\Flagged, only in setFlags, folder opened read-write only there', () => {
+    expect([...ALLOWED_STORE_FLAGS]).toEqual(['\\Seen', '\\Flagged']);
+    const imap = code.find((x) => x.f === 'src/core/mail/imap.ts')!.code;
+    const setFlags = imap.slice(imap.indexOf('async setFlags'), imap.indexOf('async close'));
+    const iface = imap.slice(imap.indexOf('interface ImapFlags'), imap.indexOf('export function defaultImapFactory'));
+    const rest = imap.replace(setFlags, '').replace(iface, '');
+    expect(rest, 'flag changes outside setFlags').not.toMatch(/messageFlags(Add|Remove|Set)|\bSTORE\b/);
+    expect(setFlags.indexOf('FlagGrant.isValid(grant)')).toBeGreaterThan(-1);
+    expect(setFlags.indexOf('FlagGrant.isValid(grant)')).toBeLessThan(setFlags.indexOf('messageFlagsAdd'));
+    expect(setFlags).toContain('ALLOWED_STORE_FLAGS');
+    expect(setFlags).not.toMatch(/Deleted|Draft|Answered|\$Junk|NotJunk/);
+    // opening a folder read-write exists only for MOVE, STORE and nothing else
+    expect([...imap.matchAll(/readOnly:\s*false/g)]).toHaveLength(4); // 2 in the interfaces, 2 calls (uidMove, setFlags)
+    for (const { f, code: c } of code) if (f !== 'src/core/mail/imap.ts') expect(c, f).not.toMatch(/readOnly:\s*false|messageFlags(Add|Remove|Set)/);
+  });
+
+  it('a flag grant can never carry another flag', () => {
+    const boxes = [{ path: 'INBOX', name: 'INBOX', role: 'inbox' }];
+    for (const seen of [true, false, undefined]) for (const flagged of [true, false, undefined]) {
+      if (seen === undefined && flagged === undefined) {
+        expect(() => authorizeFlags({ mailboxes: boxes, sourcePaths: ['INBOX'], seen, flagged })).toThrow(/Nothing to change/);
+        continue;
+      }
+      const g = authorizeFlags({ mailboxes: boxes, sourcePaths: ['INBOX'], seen, flagged });
+      for (const f of [...g.add, ...g.remove]) expect(['\\Seen', '\\Flagged']).toContain(f);
+    }
+    expect(() => FlagGrant.issue(['INBOX'], 1, ['\\Deleted' as never], [])).toThrow();
   });
 
   it('files are removed only in the backup store', () => {

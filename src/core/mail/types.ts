@@ -1,4 +1,4 @@
-import type { DraftGrant, TrashGrant } from '../permissions.js';
+import type { DraftGrant, FlagGrant, MoveGrant, TrashGrant } from '../permissions.js';
 
 export interface Address {
   name?: string;
@@ -58,13 +58,25 @@ export interface SearchCriteria {
   unreadOnly?: boolean | undefined;
 }
 
+/** An attachment of a message. `id` is the IMAP body part (e.g. "2" or "2.1"), stable for as long as the message stays where it is. */
+export interface AttachmentInfo {
+  id: string;
+  filename: string;
+  contentType: string;
+  /** Decoded size in bytes (estimated from the encoded size). */
+  size: number;
+  inline: boolean;
+}
+
 /** Read access to mail (replaceable). Deliberately has no method that changes anything. */
 export interface MailReader {
   listMailboxes(): Promise<MailboxInfo[]>;
   listRecent(path: string, count: number): Promise<MessageSummary[]>;
   search(path: string, criteria: SearchCriteria, caps: { limit: number; localPass: number }): Promise<{ total: number; messages: MessageSummary[] }>;
   /** Full message (raw source) including its state. Marks nothing as read. */
-  fetchSource(ref: MessageRef): Promise<{ source: Buffer; summary: MessageSummary; truncated: boolean }>;
+  fetchSource(ref: MessageRef): Promise<{ source: Buffer; summary: MessageSummary; truncated: boolean; attachments: AttachmentInfo[] }>;
+  /** One attachment, decoded (BODY.PEEK of just this part; marks nothing as read). Refuses parts larger than maxBytes. */
+  fetchPart(ref: MessageRef, part: string, maxBytes: number): Promise<{ data: Buffer; info: AttachmentInfo; charset?: string }>;
   /** Messages in a folder that belong to one of the Message-IDs (Message-ID, In-Reply-To or References). */
   findRelated(path: string, messageIds: string[], limit: number): Promise<MessageSummary[]>;
 }
@@ -74,12 +86,26 @@ export interface DraftStore {
   appendDraft(grant: DraftGrant, raw: Buffer): Promise<{ mailbox: string; id?: string }>;
 }
 
+/** Checks messages before they are changed. Reads read-only. */
+export interface MailChecker {
+  /** Summaries of the messages (in the order of the refs, undefined = not found). Reads read-only. */
+  summaries(refs: MessageRef[]): Promise<Array<MessageSummary | undefined>>;
+}
+
 /**
  * Moving to the Trash (IMAP MOVE). Requires a TrashGrant from permissions.ts.
  * Deliberately has nothing for permanent deletion: no \\Deleted, no EXPUNGE.
  */
-export interface MailTrasher {
-  /** Summaries of the messages (in the order of the refs, undefined = not found). Reads read-only. */
-  summaries(refs: MessageRef[]): Promise<Array<MessageSummary | undefined>>;
+export interface MailTrasher extends MailChecker {
   moveToTrash(grant: TrashGrant, refs: MessageRef[]): Promise<{ trash: string; moved: number }>;
+}
+
+/** Moving messages to another folder (IMAP UID MOVE). Requires a MoveGrant from permissions.ts. */
+export interface MailMover extends MailChecker {
+  moveMessages(grant: MoveGrant, refs: MessageRef[]): Promise<{ target: string; moved: number; newIds: Array<string | undefined> }>;
+}
+
+/** Marking messages read/unread and flagged/unflagged. Requires a FlagGrant from permissions.ts. */
+export interface MailFlagger extends MailChecker {
+  setFlags(grant: FlagGrant, refs: MessageRef[]): Promise<{ changed: number }>;
 }

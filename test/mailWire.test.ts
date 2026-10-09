@@ -61,7 +61,7 @@ describe('Reading changes nothing (checked on the wire, real imapflow against th
     const unread = recent.messages.find((m) => m.subject === 'Unread two')!;
     const full = await service.getMessage(unread.id);
     expect(full.text).toContain('Content of Unread two');
-    expect(full.attachments).toEqual([]); // attachment only in the test server's body structure, not in the raw source
+    expect(full.attachments).toEqual([{ attachmentId: '2', filename: 'invoice.pdf', contentType: 'application/pdf', size: 750, inline: false }]); // attachment only in the test server's body structure, not in the raw source
     await service.getThread(unread.id);
 
     expect(JSON.stringify(server.flagsSnapshot())).toBe(before);

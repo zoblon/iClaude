@@ -5,7 +5,7 @@ import { UserError } from '../errors.js';
 import { authorizeDraft } from '../permissions.js';
 import { clip } from '../untrusted.js';
 import { parseMessage, tidy } from './body.js';
-import { buildDraft, parseMailbox, type Mailbox } from './mime.js';
+import { buildDraft, parseMailbox, safeFilename, type DraftAttachment, type Mailbox } from './mime.js';
 import { decodeRef } from './ref.js';
 import type { Address, DraftStore, MailReader } from './types.js';
 
@@ -13,6 +13,9 @@ const MAX_RECIPIENTS = 20;
 const MAX_BODY_CHARS = 20_000;
 const MAX_QUOTE_CHARS = 4_000;
 const MAX_REFERENCES = 20;
+const MAX_FORWARD_CHARS = 60_000;
+/** Total size of the forwarded attachments (decoded). */
+export const MAX_FORWARD_BYTES = 20 * 1024 * 1024;
 
 export interface DraftInput {
   to?: string[] | undefined;
@@ -21,8 +24,12 @@ export interface DraftInput {
   body: string;
   /** ID of a message being replied to (sets In-Reply-To and References). */
   replyToId?: string | undefined;
-  /** Quote the original message when replying (default: yes). */
+  /** Quote the original message when replying or forwarding (default: yes). */
   quote?: boolean | undefined;
+  /** ID of a message to forward (excludes replyToId). */
+  forwardOfId?: string | undefined;
+  /** Which attachments of the original to take along: attachment_ids from get_message. Default: all. An empty list: none. */
+  forwardAttachmentIds?: string[] | undefined;
 }
 
 export interface DraftView {
@@ -34,6 +41,9 @@ export interface DraftView {
   subject: string;
   inReplyTo?: string;
   quoted: boolean;
+  /** Set for a forwarded message. */
+  forwarded?: true;
+  attachments?: Array<{ filename: string; size: number }>;
   bodyChars: number;
   note: string;
 }
@@ -64,8 +74,43 @@ export function quoteBlock(text: string, who: string, date: DateTime | undefined
   return `${when}\n${body}${cut ? '\n> […]' : ''}`;
 }
 
+/** "Fwd: ..." only once (also if "Fw:" or "WG:" is already there). */
+export function forwardSubject(original: string): string {
+  return /^\s*(fwd?|wg|tr|rv)\s*:/i.test(original) ? original.trim() : `Fwd: ${original.trim()}`;
+}
+
+/** "CEST", "EDT", … Intl only knows some abbreviations per locale, so en-US is tried first, then en-GB. */
+function zoneAbbreviation(dt: DateTime): string {
+  const us = dt.setLocale('en-US').toFormat('ZZZZ');
+  if (!/^GMT[+-]/.test(us)) return us;
+  const gb = dt.setLocale('en-GB').toFormat('ZZZZ');
+  return /^GMT[+-]/.test(gb) ? us : gb;
+}
+
+const showAddresses = (list: Address[]) =>
+  list.map((a) => (a.address ? (a.name ? `${a.name} <${a.address}>` : a.address) : (a.name ?? ''))).filter(Boolean).join(', ');
+
+/** The block Apple Mail puts above a forwarded message: "Begin forwarded message:" with From, Subject, Date, To (and Cc). */
+export function forwardBlock(o: { from: Address[]; subject: string; date: DateTime | undefined; to: Address[]; cc: Address[]; text: string | undefined }): string {
+  const lines = [
+    'Begin forwarded message:',
+    '',
+    `From: ${showAddresses(o.from) || 'Unknown'}`,
+    `Subject: ${o.subject}`,
+    ...(o.date ? [`Date: ${o.date.setLocale('en-US').toFormat("cccc, LLLL d, yyyy 'at' h:mm:ss a")} ${zoneAbbreviation(o.date)}`] : []),
+    `To: ${showAddresses(o.to) || 'Unknown'}`,
+    ...(o.cc.length ? [`Cc: ${showAddresses(o.cc)}`] : []),
+  ];
+  const head = lines.join('\n');
+  if (o.text === undefined) return head;
+  const chars = Array.from(o.text);
+  const cut = chars.length > MAX_FORWARD_CHARS;
+  return `${head}\n\n${cut ? chars.slice(0, MAX_FORWARD_CHARS).join('') : o.text}${cut ? '\n\n[…]' : ''}`;
+}
+
 /**
- * Creates drafts. Nothing is ever sent. The sender is always the user's own iCloud address; there is no Bcc and no attachments.
+ * Creates drafts. Nothing is ever sent. The sender is always the user's own iCloud address; there is no Bcc.
+ * Attachments exist only when forwarding a message (the attachments of the original).
  */
 export class DraftService {
   constructor(
@@ -87,11 +132,59 @@ export class DraftService {
     // Permissions first: the target folder (Drafts) is fixed before anything is built or loaded.
     const grant = authorizeDraft(await this.mailboxes());
 
+    if (a.replyToId && a.forwardOfId) throw new UserError('Please give either reply_to_id or forward_of_id, not both.');
+    if (a.forwardAttachmentIds && !a.forwardOfId) throw new UserError('forward_attachment_ids only makes sense together with forward_of_id.');
+
     let subject = (a.subject ?? '').replace(/[\r\n\t]+/g, ' ').trim();
     let inReplyTo: string | undefined;
     let references: string[] | undefined;
     let text = body;
     let quoted = false;
+    let attachments: DraftAttachment[] = [];
+    let forwarded = false;
+
+    if (a.forwardOfId) {
+      if (!to.length && !cc.length) throw new UserError('Please specify at least one recipient (to or cc) for the forwarded message.');
+      const ref = decodeRef(a.forwardOfId);
+      const original = await this.reader.fetchSource(ref);
+      const msg = await parseMessage(original.source, 'text');
+      if (!subject) subject = forwardSubject(msg.subject);
+
+      const available = original.attachments;
+      let chosen = available;
+      if (a.forwardAttachmentIds) {
+        const missing = a.forwardAttachmentIds.filter((id) => !available.some((x) => x.id === id));
+        if (missing.length) {
+          throw new UserError(`The original has no attachment with the attachment_id ${missing.map((m) => `"${m.slice(0, 20)}"`).join(', ')}. Available: ${available.map((x) => `${x.id} (${x.filename})`).join(', ') || '(none)'}.`);
+        }
+        chosen = available.filter((x) => a.forwardAttachmentIds!.includes(x.id));
+      }
+      const total = chosen.reduce((n, x) => n + x.size, 0);
+      if (total > MAX_FORWARD_BYTES) {
+        throw new UserError(
+          `The attachments are too large to forward (${(total / 1024 / 1024).toFixed(1)} MB, at most ${MAX_FORWARD_BYTES / 1024 / 1024} MB in total). Nothing was created. Choose fewer attachments with forward_attachment_ids, or forward the mail in Apple Mail.`,
+        );
+      }
+      let loaded = 0;
+      for (const info of chosen) {
+        const part = await this.reader.fetchPart(ref, info.id, MAX_FORWARD_BYTES - loaded);
+        loaded += part.data.length;
+        if (loaded > MAX_FORWARD_BYTES) throw new UserError(`The attachments are too large to forward (at most ${MAX_FORWARD_BYTES / 1024 / 1024} MB in total). Nothing was created.`);
+        attachments.push({ filename: part.info.filename, contentType: part.info.contentType, data: part.data });
+      }
+      const when = msg.date ? DateTime.fromISO(msg.date).setZone(this.cfg.timezone) : undefined;
+      const block = forwardBlock({
+        from: msg.from,
+        subject: msg.subject,
+        date: when?.isValid ? when : undefined,
+        to: msg.to,
+        cc: msg.cc,
+        text: a.quote === false ? undefined : `${tidy(msg.text)}${original.truncated ? '\n\n[The original message is very large; only the beginning is shown.]' : ''}`,
+      });
+      text = `${body}\n\n${block}`;
+      quoted = a.quote !== false;
+      forwarded = true;
+    }
 
     if (a.replyToId) {
       const original = await this.reader.fetchSource(decodeRef(a.replyToId));
@@ -116,16 +209,16 @@ export class DraftService {
     }
 
     if (!to.length && !cc.length) throw new UserError('Please specify at least one recipient (to or cc).');
-    if (!subject) throw new UserError('Please specify a subject (or use reply_to_id).');
+    if (!subject) throw new UserError('Please specify a subject (or use reply_to_id or forward_of_id).');
     if (Array.from(subject).length > 300) throw new UserError('The subject is too long (max. 300 characters).');
 
     const from: Mailbox = { address: this.cfg.mailUser };
     const domain = this.cfg.mailUser.split('@')[1] ?? 'icloud.com';
     const { raw } = buildDraft(
-      { from, to, cc, subject, body: text, inReplyTo, references, date: DateTime.now().setZone(this.cfg.timezone) },
+      { from, to, cc, subject, body: text, inReplyTo, references, date: DateTime.now().setZone(this.cfg.timezone), attachments },
       domain,
     );
-    await this.assertSafe(raw, { from, to, cc });
+    await this.assertSafe(raw, { from, to, cc, attachments });
 
     const saved = await this.store.appendDraft(grant, raw);
     return {
@@ -137,13 +230,15 @@ export class DraftService {
       subject: clip(subject, 300),
       ...(inReplyTo ? { inReplyTo } : {}),
       quoted,
+      ...(forwarded ? { forwarded: true as const } : {}),
+      ...(attachments.length ? { attachments: attachments.map((x) => ({ filename: safeFilename(x.filename), size: x.data.length })) } : {}),
       bodyChars: Array.from(text).length,
       note: 'The draft is in the Drafts folder and was NOT sent. Please review it in Apple Mail and send it yourself.',
     };
   }
 
   /** Last safeguard: sender, recipients and headers are exactly as intended, nothing extra. */
-  private async assertSafe(raw: Buffer, want: { from: Mailbox; to: Mailbox[]; cc: Mailbox[] }): Promise<void> {
+  private async assertSafe(raw: Buffer, want: { from: Mailbox; to: Mailbox[]; cc: Mailbox[]; attachments: DraftAttachment[] }): Promise<void> {
     const p = await simpleParser(raw);
     const addrs = (a: unknown) =>
       (Array.isArray(a) ? a : a ? [a] : []).flatMap((x: { value: Array<{ address?: string }> }) => x.value.map((v) => (v.address ?? '').toLowerCase())).sort();
@@ -156,7 +251,8 @@ export class DraftService {
       !p.headers.has('sender') &&
       !p.headers.has('reply-to') &&
       !p.headers.has('return-path') &&
-      (p.attachments ?? []).length === 0;
+      // attachments exactly as intended: same number, same names, same sizes
+      JSON.stringify((p.attachments ?? []).map((x) => [x.filename, x.size])) === JSON.stringify(want.attachments.map((x) => [safeFilename(x.filename), x.data.length]));
     if (!ok) throw new UserError('Internal safeguard: sender or recipients of the draft do not match the input. Nothing was written.');
   }
 }

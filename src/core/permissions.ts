@@ -7,7 +7,8 @@
  * Deletion is allowed in only two narrowly limited ways:
  *  - an event of the user's own (authorizeDelete; it is backed up as .ics first),
  *  - MOVING a message to the Trash (authorizeTrash). Messages are never deleted permanently.
- * Nothing is ever sent.
+ * Mail can also be moved to other folders (authorizeMove; never to the Trash, Drafts, Sent or Junk) and marked
+ * read/unread and flagged/unflagged (authorizeFlags; only \\Seen and \\Flagged). Nothing is ever sent.
  */
 import type { CalendarInfo } from './calendar/types.js';
 import type { MailboxInfo } from './mail/types.js';
@@ -330,4 +331,131 @@ export function authorizeContactWrite(r: { op: ContactWriteOp; target: string; v
   if (r.op === 'create' && !/^[A-Za-z0-9-]{8,64}\.vcf$/.test(r.target)) throw new UserError('Internal error: invalid file name.');
   if (r.op === 'update' && (!/^\/[^?#\s]*\.vcf$/i.test(r.target) || r.target.includes('..'))) throw new UserError('Invalid contact ID. Use the id from search_contacts unchanged.');
   return ContactWriteGrant.issue(r.op, r.target);
+}
+
+/* ------------------------------------------------------------------ */
+/* Mail: moving to another folder                                      */
+/* ------------------------------------------------------------------ */
+
+/** Maximum number of messages per call. */
+export const MAX_MOVE_PER_CALL = 50;
+export const MAX_FLAG_PER_CALL = 50;
+
+const moveIssued = new WeakSet<MoveGrant>();
+
+/** Permission to MOVE messages from the given folders into exactly one target folder. */
+export class MoveGrant {
+  private constructor(
+    readonly target: string,
+    readonly sources: ReadonlySet<string>,
+    readonly count: number,
+  ) {}
+
+  static issue(target: string, sources: Iterable<string>, count: number): MoveGrant {
+    const g = new MoveGrant(target, new Set(sources), count);
+    moveIssued.add(g);
+    return g;
+  }
+
+  static isValid(g: unknown): g is MoveGrant {
+    return g instanceof MoveGrant && moveIssued.has(g);
+  }
+}
+
+export interface MoveRequest {
+  mailboxes: MailboxInfo[];
+  /** Folders of the messages to be moved (one per message). */
+  sourcePaths: string[];
+  /** Path of the target folder (already resolved from a name or role by the caller). */
+  targetPath: string;
+}
+
+/** Folder names that are never a target, whatever their attributes say (the Trash has its own tool). */
+const FORBIDDEN_TARGET_NAMES = /^(deleted messages|deleted items|trash|bin|papierkorb|drafts?|entw(ü|ue)rfe|sent|sent messages|sent items|gesendet|gesendete objekte|junk|junk e-?mail|spam)$/i;
+const FORBIDDEN_TARGET_ROLES = new Set(['trash', 'drafts', 'sent', 'junk']);
+
+/**
+ * Moving to a folder of the user's own. Not allowed as a target: the Trash (trash_message exists for that), Drafts, Sent and Junk,
+ * recognised by attribute, by role and by name. The target must not be the folder the messages are already in.
+ */
+export function authorizeMove(r: MoveRequest): MoveGrant {
+  const n = r.sourcePaths.length;
+  if (n === 0) throw new UserError('No message specified. Please name at least one message.');
+  if (n > MAX_MOVE_PER_CALL) {
+    throw new UserError(`Too many messages at once (${n}, at most ${MAX_MOVE_PER_CALL} per call). Nothing was moved. Please split them into smaller groups.`);
+  }
+  const target = r.mailboxes.find((m) => m.path === r.targetPath);
+  if (!target) throw new UserError('The target folder is unknown. Nothing was moved. Use list_mailboxes to check the available folders.');
+  if (target.role === 'trash') {
+    throw new UserError('The Trash is not a target for move_message. Use trash_message to move mails to the Trash. Nothing was moved.');
+  }
+  if ((target.role && FORBIDDEN_TARGET_ROLES.has(target.role)) || FORBIDDEN_TARGET_NAMES.test(target.name.trim()) || FORBIDDEN_TARGET_NAMES.test(target.path.trim())) {
+    throw new UserError(`"${target.name}" (Drafts, Sent, Junk and Trash) is not a target for move_message. Nothing was moved.`);
+  }
+  for (const path of new Set(r.sourcePaths)) {
+    if (path === target.path) throw new UserError('At least one message is already in the target folder. Nothing was moved.');
+    if (!r.mailboxes.some((m) => m.path === path)) {
+      throw new UserError('The folder of a message is unknown. Nothing was moved. Please find the message again with list_recent or search_messages.');
+    }
+  }
+  return MoveGrant.issue(target.path, r.sourcePaths, n);
+}
+
+/* ------------------------------------------------------------------ */
+/* Mail: marking read/unread and flagged/unflagged                     */
+/* ------------------------------------------------------------------ */
+
+/** The only flags this connector ever sets or clears with STORE. \\Deleted, \\Draft, \\Answered and keywords are not among them. */
+export const ALLOWED_STORE_FLAGS = ['\\Seen', '\\Flagged'] as const;
+export type StoreFlag = (typeof ALLOWED_STORE_FLAGS)[number];
+
+const flagIssued = new WeakSet<FlagGrant>();
+
+/** Permission to set/clear \\Seen and \\Flagged on messages in the given folders. */
+export class FlagGrant {
+  private constructor(
+    readonly sources: ReadonlySet<string>,
+    readonly count: number,
+    readonly add: readonly StoreFlag[],
+    readonly remove: readonly StoreFlag[],
+  ) {}
+
+  static issue(sources: Iterable<string>, count: number, add: readonly StoreFlag[], remove: readonly StoreFlag[]): FlagGrant {
+    for (const f of [...add, ...remove]) if (!(ALLOWED_STORE_FLAGS as readonly string[]).includes(f)) throw new Error('Flag not allowed');
+    const g = new FlagGrant(new Set(sources), count, [...add], [...remove]);
+    flagIssued.add(g);
+    return g;
+  }
+
+  static isValid(g: unknown): g is FlagGrant {
+    return g instanceof FlagGrant && flagIssued.has(g);
+  }
+}
+
+export interface FlagRequest {
+  mailboxes: MailboxInfo[];
+  sourcePaths: string[];
+  /** true = mark as read, false = mark as unread, undefined = leave as is. */
+  seen?: boolean | undefined;
+  /** true = flag, false = remove the flag, undefined = leave as is. */
+  flagged?: boolean | undefined;
+}
+
+export function authorizeFlags(r: FlagRequest): FlagGrant {
+  const n = r.sourcePaths.length;
+  if (n === 0) throw new UserError('No message specified. Please name at least one message.');
+  if (n > MAX_FLAG_PER_CALL) {
+    throw new UserError(`Too many messages at once (${n}, at most ${MAX_FLAG_PER_CALL} per call). Nothing was changed. Please split them into smaller groups.`);
+  }
+  if (r.seen === undefined && r.flagged === undefined) throw new UserError('Nothing to change. Please set read and/or flagged.');
+  for (const path of new Set(r.sourcePaths)) {
+    if (!r.mailboxes.some((m) => m.path === path)) {
+      throw new UserError('The folder of a message is unknown. Nothing was changed. Please find the message again with list_recent or search_messages.');
+    }
+  }
+  const add: StoreFlag[] = [];
+  const remove: StoreFlag[] = [];
+  if (r.seen !== undefined) (r.seen ? add : remove).push('\\Seen');
+  if (r.flagged !== undefined) (r.flagged ? add : remove).push('\\Flagged');
+  return FlagGrant.issue(r.sourcePaths, n, add, remove);
 }

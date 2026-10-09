@@ -29,6 +29,7 @@
     "mailparser": "^3.9.36",
     "tsdav": "^2.4.0",
     "turndown": "^7.2.4",
+    "unpdf": "^1.8.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {

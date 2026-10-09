@@ -4,7 +4,7 @@
   "display_name": "iClaude",
   "version": "0.2.3",
   "description": "Local access to your iCloud calendars, contacts and mail. Never sends anything. Messages only go to the Trash (never deleted permanently), your own events are deleted only after a backup.",
-  "long_description": "This connector runs entirely on your Mac (no server on the internet) and connects Claude to iCloud.\n\nCalendar: read and search events, find free slots, create and change events. There are no invitations or attendees. Shared calendars are only written to when you name the calendar explicitly. Deleting: the delete_event tool deletes only your own events, single events and whole recurring series. Before deleting, it backs up the event as an .ics file in ~/Library/Application Support/icloud-mcp/deleted/ (90 days, at most 200 files; double-clicking the file restores it in Apple Calendar) and returns it in full. Events with attendees, events organized by others, events in shared calendars and single occurrences of a series are never deleted. iCloud itself cannot restore individual deleted events.\n\nContacts: search (also by address or group), read all details, list groups, see upcoming birthdays and anniversaries, create contacts (after a duplicate check) and change them with update_contact. Before every change the contact card is saved as a .vcf file in ~/Library/Application Support/icloud-mcp/contacts-backup/. Contacts and groups are never deleted.\n\nMail: folders, inbox and search, read messages and conversations (without marking anything as read), prepare replies and drafts. Drafts are saved in the Drafts folder; you review and send them yourself in Apple Mail. The trash_message tool moves at most 20 messages per call to the Trash, after checking subject and sender. Nothing is ever deleted permanently; messages in the Trash can be restored for about 30 days. There is no sending and no flagging.\n\nRecommendation: in Claude Desktop (Settings > Extensions), set the deletion tools delete_event and trash_message and the contact tool update_contact to require approval. Claude then asks before every deletion or contact change, and scheduled tasks cannot run them on their own.\n\nYour app-specific password is stored in the macOS Keychain.",
+  "long_description": "This connector runs entirely on your Mac (no server on the internet) and connects Claude to iCloud.\n\nCalendar: read and search events, find free slots, create and change events. There are no invitations or attendees. Shared calendars are only written to when you name the calendar explicitly. Deleting: the delete_event tool deletes only your own events, single events and whole recurring series. Before deleting, it backs up the event as an .ics file in ~/Library/Application Support/icloud-mcp/deleted/ (90 days, at most 200 files; double-clicking the file restores it in Apple Calendar) and returns it in full. Events with attendees, events organized by others, events in shared calendars and single occurrences of a series are never deleted. iCloud itself cannot restore individual deleted events.\n\nContacts: search (also by address or group), read all details, list groups, see upcoming birthdays and anniversaries, create contacts (after a duplicate check) and change them with update_contact. Before every change the contact card is saved as a .vcf file in ~/Library/Application Support/icloud-mcp/contacts-backup/. Contacts and groups are never deleted.\n\nMail: folders, inbox and search, read messages, conversations and attachments (text, PDF text, calendar invitations; without marking anything as read), prepare replies, forwards (with the original's attachments) and drafts. Drafts are saved in the Drafts folder; you review and send them yourself in Apple Mail. The trash_message tool moves at most 20 messages per call to the Trash, after checking subject and sender. Nothing is ever deleted permanently; messages in the Trash can be restored for about 30 days. move_message moves up to 50 messages to another folder (never to the Trash, Drafts, Sent or Junk), set_message_flags marks up to 50 messages as read/unread or flagged. Both check id, subject and sender first. There is no sending.\n\nRecommendation: in Claude Desktop (Settings > Extensions), set the deletion tools delete_event and trash_message and the tools update_contact, move_message and set_message_flags to require approval. Claude then asks before every deletion, contact change, move or marking, and scheduled tasks cannot run them on their own.\n\nYour app-specific password is stored in the macOS Keychain.",
   "author": {
     "name": "Tobi Rehkopf"
   },
@@ -113,7 +113,11 @@
     },
     {
       "name": "get_message",
-      "description": "Read a message (paged, without marking it as read)"
+      "description": "Read a message (paged, without marking it as read); lists attachments"
+    },
+    {
+      "name": "read_attachment",
+      "description": "Read one attachment (text, PDF text, calendar invitation); other types: metadata only"
     },
     {
       "name": "get_thread",
@@ -121,11 +125,19 @@
     },
     {
       "name": "create_draft",
-      "description": "Create a draft or reply draft (never sent)"
+      "description": "Create a draft, reply draft or forward draft with the original's attachments (never sent)"
     },
     {
       "name": "trash_message",
       "description": "Move messages to the Trash (at most 20, never deleted permanently)"
+    },
+    {
+      "name": "move_message",
+      "description": "Move messages to another folder (at most 50; never to the Trash, Drafts, Sent or Junk)"
+    },
+    {
+      "name": "set_message_flags",
+      "description": "Mark messages read/unread or flagged/unflagged (at most 50)"
     }
   ],
   "tools_generated": false,

@@ -26,6 +26,8 @@ src/core/                domain logic, knows nothing about MCP (reusable for a l
   contacts/vcardEdit.ts  line-level vCard editing (create and change contact cards without re-serializing)
   calendar/backup.ts     .ics backup before deletion, cleanup (90 days / 200 files)
   mail/trash.ts          trash_message: checks subject and sender, then moves
+  mail/move.ts flags.ts  move_message and set_message_flags (shared check of id, subject and sender in mail/verify.ts)
+  mail/attachment.ts     read_attachment: text, PDF (unpdf, bundled), calendar invitations (calendar/invitation.ts)
   untrusted.ts           delimiting untrusted content, structuredContent
 src/mcp/                 thin MCP layer: tools, Zod schemas, annotations
 src/stdio.ts             entry point (stdio)
@@ -38,12 +40,13 @@ docs/ICLOUD-NOTES.md     measured iCloud quirks and decisions
 These rules are the core of the project. They are enforced in code, not just in tool descriptions, and tests guard them. Changing them changes the promise made to users.
 
 - **Permissions in code:** write methods require a grant from `src/core/permissions.ts`. Tool annotations (`readOnlyHint`, `destructiveHint`) must be accurate.
+- **Moving mail:** `move_message` moves with the same direct `UID MOVE` as `trash_message`; the single `exec('UID MOVE')` sits in the private `uidMove`, reached only from `moveToTrash` and `moveMessages` after their grant checks (`TrashGrant`, `MoveGrant`). `authorizeMove` refuses the Trash, Drafts, Sent and Junk (by attribute, role and name) and the source folder as targets. Folders are opened read-write (`SELECT`) only for `UID MOVE` and `STORE`.
 - **Only two ways to delete:** `delete_event` (own event, `.ics` backup first; never with attendees, another organizer, in shared calendars or as a single occurrence) and `trash_message` (IMAP `UID MOVE` into the folder with the `\Trash` flag, at most 20, subject and sender are checked; never `\Deleted`, never `EXPUNGE`). A guard test in `test/permissions.test.ts` enforces this in the source code.
-- **No sending:** no SMTP in the code, no flagging of mails.
+- **No sending:** no SMTP in the code. Mail can be marked only with `set_message_flags`: IMAP `STORE` of exactly `\Seen` and `\Flagged` (`ALLOWED_STORE_FLAGS`, enforced by the `FlagGrant`; `\Deleted`, `\Draft`, `\Answered` and keywords are never set). A guard test checks that `STORE` exists only in `setFlags`.
 - **Contacts:** only single cards are created (`PUT` with `If-None-Match: *`) or changed (`PUT` with `If-Match`), always with a `ContactWriteGrant`. `update_contact` saves a `.vcf` backup first (`contacts-backup/`, same rules as the `.ics` backup). No `DELETE` on CardDAV, no tool to delete contacts or groups, group cards are never written (the grant refuses them). `ical.js` must not re-serialize a vCard (see ICLOUD-NOTES.md): edit on the line level.
 - **No invitations:** `create_event` and `update_event` set no attendees. Events with attendees or another organizer are not changed; for recurring series only the whole series.
 - **Shared calendars** (marked `shared: true` in `list_calendars`) only with an explicit `shared_calendar="<name>"`. Never run live tests in shared calendars.
-- **Reading mail without side effects:** open folders read-only (`EXAMINE`) and use `BODY.PEEK`. Drafts only via `APPEND` with `\Draft` into the Drafts folder.
+- **Reading mail without side effects:** open folders read-only (`EXAMINE`) and use `BODY.PEEK` (also for `read_attachment`, which fetches just one part). Drafts only via `APPEND` with `\Draft` into the Drafts folder; a forward draft carries only the original's attachments (at most 20 MB), re-encoded as Base64.
 - **Untrusted content:** output mail and event content delimited as untrusted content. No content and no credentials in logs; sanitize error messages.
 - **Credentials** only as `user_config` with `sensitive: true` (macOS Keychain) or locally in `.env`, which is never committed. Separate logins for CalDAV/CardDAV (Apple ID) and IMAP (`@icloud.com`).
 - Do not change the extension's internal identifier (`name: icloud-connector` in the manifest). Otherwise an update creates a second, empty extension. `test/manifest.test.ts` guards this.

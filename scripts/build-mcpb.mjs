@@ -39,6 +39,18 @@ await build({
   logLevel: 'warning',
 });
 
+// Notices for bundled code whose license asks for them (esbuild only keeps license comments).
+const legalFile = join(stage, 'server', 'index.mjs.LEGAL.txt');
+const notices = [
+  '\n\n==== unpdf (MIT) — bundles PDF.js ====\n',
+  readFileSync(join(root, 'node_modules', 'unpdf', 'LICENSE'), 'utf8'),
+  '\n==== PDF.js (Apache-2.0), bundled inside unpdf ====',
+  'Copyright Mozilla Foundation and contributors. Licensed under the Apache License, Version 2.0',
+  '(https://www.apache.org/licenses/LICENSE-2.0). PDF.js: https://github.com/mozilla/pdf.js',
+  '',
+].join('\n');
+writeFileSync(legalFile, (existsSync(legalFile) ? readFileSync(legalFile, 'utf8') : '') + notices);
+
 // 2) Manifest (version from package.json) and icon
 manifest.version = pkg.version;
 writeFileSync(join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');

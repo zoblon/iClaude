@@ -8,7 +8,7 @@ A local MCP server (packaged as a Desktop Extension) for iCloud Calendar, Contac
 
 **What it does and what it doesn't:**
 
-- **Never sends.** Mails are only created as drafts in the Drafts folder. You review and send them yourself in Apple Mail.
+- **Never sends.** Mails are only created as drafts (also forwards, with attachments) in the Drafts folder. You review and send them yourself in Apple Mail.
 - **Never deletes mails permanently.** `trash_message` moves them to the Trash, where they can be recovered for about 30 days.
 - **Deletes only your own events, and only with a backup.** `delete_event` first saves an `.ics` backup and returns the full event.
 - **Writes to shared calendars only when you name them explicitly.** Contacts are only created or changed on request (`update_contact` backs the card up first) and are never deleted. Invitations and attendees are not supported.
@@ -67,7 +67,7 @@ Notes:
    | Default calendar for new events | Name of a **private event calendar**, for example `Home`. Not a reminders list and not a shared calendar. You can leave it empty; then every new event has to name a calendar. |
 
 4. Enable the extension.
-5. **Set the delete tools and `update_contact` to require approval:** in *Settings > Extensions* (depending on the version *Customize > Connectors*), under **iClaude**, for the tools `delete_event`, `trash_message` and `update_contact`. Claude then asks before every deletion or contact change and shows the title and start time, the subject and sender, or the contact's name.
+5. **Set the delete tools, `update_contact`, `move_message` and `set_message_flags` to require approval:** in *Settings > Extensions* (depending on the version *Customize > Connectors*), under **iClaude**, for the tools `delete_event`, `trash_message`, `update_contact`, `move_message` and `set_message_flags`. Claude then asks before every deletion, contact change, move or marking and shows the title and start time, the subject and sender, or the contact's name.
 6. Try it, for example with "Which calendars can you see?" and "What's on this week?". Shared calendars are marked as shared in the answer.
 
 The extension's interface (tool titles, descriptions, error messages) is in English. Claude still answers in your language.
@@ -82,8 +82,10 @@ The extension's interface (tool titles, descriptions, error messages) is in Engl
 | `search_contacts`, `get_contact`, `list_contact_groups`, `upcoming_contact_dates` | Read contacts, groups, upcoming birthdays and anniversaries | read-only |
 | `create_contact` | Create one contact (checks for duplicates first) | write; never changes existing contacts |
 | **`update_contact`** | Change one contact | **write**, `.vcf` backup first (see below) |
-| `list_mailboxes`, `unread_counts`, `list_recent`, `search_messages`, `get_message`, `get_thread` | Read mail; nothing is marked as read | read-only |
-| `create_draft` | Create a draft or a reply draft | write, only in the Drafts folder |
+| `list_mailboxes`, `unread_counts`, `list_recent`, `search_messages`, `get_message`, `get_thread`, `read_attachment` | Read mail and attachments (text, PDF text, calendar invitations); nothing is marked as read | read-only |
+| `create_draft` | Create a draft, a reply draft or a forward draft (with the original's attachments) | write, only in the Drafts folder |
+| **`move_message`** | Move mails to another folder (not the Trash, Drafts, Sent or Junk) | **move** (see below) |
+| **`set_message_flags`** | Mark mails read/unread or flagged/not flagged | **write**, only these two marks |
 | **`trash_message`** | Move mails to the Trash | **move** (see below) |
 
 Events with attendees and events organized by someone else are never changed. For recurring series, only the whole series can be changed or deleted, not single occurrences.
@@ -124,6 +126,13 @@ At most 20 mails per call.
   If a server rejects `UID MOVE`, nothing happens. There is no fallback via the deleted flag and `EXPUNGE`.
 - Mails that are already in the Trash are never touched. There is no permanent deletion.
 
+### `read_attachment`, `move_message`, `set_message_flags` and forwarding
+
+- **`read_attachment`** (mail `id`, `attachment_id` from `get_message`, optional `offset` for long texts) downloads only that one attachment (at most 15 MB, `BODY.PEEK`, nothing is marked as read). It reads text files (also CSV, and HTML as Markdown), PDFs (text is extracted on your Mac, no network; a scanned PDF without a text layer is reported as such, there is no OCR) and calendar invitations (`.ics`: title, start, end, location, organizer, method, recurrence, description). Images, Office files and ZIP files return only their metadata.
+- **`move_message`** moves up to 50 mails into a folder (path, name, or the role `archive`). Required for each mail: `id`, `subject` and `from`; if one doesn't match, **nothing** is moved. The target must not be the Trash (that's what `trash_message` is for), Drafts, Sent or Junk, and not the folder the mail is already in. Mails are moved with a direct IMAP `UID MOVE`, without a fallback. The result contains each mail's new ID and folder, so the move can be undone.
+- **`set_message_flags`** marks up to 50 mails read/unread and/or flagged/not flagged (`\Seen` and `\Flagged` are the only flags the code can set). Same check of `id`, `subject` and `from`; the result shows the previous state.
+- **Forwarding:** `create_draft` with `forward_of_id` creates a draft "Fwd: …" with a forwarding block in the style of Apple Mail (From, Subject, Date, To) and the text of the original (`quote: false`: only the block). The original's attachments are taken along, all by default or those listed in `forward_attachment_ids`, up to 20 MB in total. It is still only a draft in the Drafts folder; you send it yourself.
+
 ## Use from your phone and in scheduled tasks
 
 The connector runs **on your Mac**, as part of Claude Desktop. It is only reachable while the Mac is awake and Claude Desktop is running. There is no server on the internet that steps in.
@@ -143,7 +152,7 @@ For this project that means: reading, creating events and drafts work in schedul
 
 1. Download the new `.mcpb` from the releases page and open it with a double-click, as during installation. The extension keeps its internal identifier (`icloud-connector`), so no second extension is created.
 2. Check in *Settings > Extensions* that the fields are still filled in. **Anthropic doesn't document whether settings are kept when installing over an existing version.** Claude Desktop stores them separately from the program files, but keep the app-specific password at hand or create a new one, just in case.
-3. Check the permissions: `delete_event` and `trash_message` set to require approval, and set any newly added tools deliberately.
+3. Check the permissions: `delete_event`, `trash_message`, `update_contact`, `move_message` and `set_message_flags` set to require approval, and set any newly added tools deliberately.
 
 Since version 0.2.1 the extension is called **iClaude** in Claude Desktop; before that it was "iCloud: Kalender, Kontakte, Mail". Please update saved tasks or instructions that use the old name.
 

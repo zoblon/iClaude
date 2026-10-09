@@ -53,7 +53,8 @@ export interface MessageView {
   messageId?: string;
   inReplyTo?: string;
   references: string[];
-  attachments: Attachment[];
+  /** Attachments; `attachmentId` is the argument for read_attachment (missing only if the server gave no structure). */
+  attachments: Array<Attachment & { attachmentId?: string }>;
   format: 'text' | 'markdown';
   page: Omit<Page, 'text'>;
   text: string;
@@ -161,7 +162,7 @@ export class MailService {
 
   async getMessage(id: string, format: 'text' | 'markdown' = 'text', offset = 0): Promise<MessageView> {
     const ref = decodeRef(id);
-    const { source, summary, truncated } = await this.reader.fetchSource(ref);
+    const { source, summary, truncated, attachments } = await this.reader.fetchSource(ref);
     const msg = await parseMessage(source, format);
     const { text, ...page } = paginate(msg.text, offset);
     return {
@@ -178,7 +179,9 @@ export class MailService {
       ...(msg.messageId ? { messageId: msg.messageId } : {}),
       ...(msg.inReplyTo ? { inReplyTo: msg.inReplyTo } : {}),
       references: msg.references,
-      attachments: msg.attachments,
+      attachments: attachments.length
+        ? attachments.map((a) => ({ attachmentId: a.id, filename: a.filename, contentType: a.contentType, size: a.size, inline: a.inline }))
+        : msg.attachments,
       format: msg.format,
       page,
       text,
