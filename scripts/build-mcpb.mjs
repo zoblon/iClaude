@@ -75,6 +75,13 @@ if (/(^|\/)\.env/.test(listing.join('\n'))) {
   process.exit(1);
 }
 
+// The packaged icon must be the current repository asset, byte for byte.
+const packedIcon = execFileSync('unzip', ['-p', out, 'icon.png']);
+if (!packedIcon.equals(readFileSync(join(root, 'assets', 'icon.png')))) {
+  console.error('The packaged icon differs from assets/icon.png.');
+  process.exit(1);
+}
+
 // Credentials must not appear anywhere in the package (values from .env, if present; nothing is printed).
 if (existsSync(join(root, '.env'))) {
   const secrets = readFileSync(join(root, '.env'), 'utf8')
