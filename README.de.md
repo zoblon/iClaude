@@ -4,7 +4,9 @@
 
 # iClaude: iCloud-Konnektor für Claude Desktop
 
-Lokaler MCP-Server (als Desktop Extension) für iCloud-Kalender, -Kontakte und -Mail. Er läuft nur auf deinem Mac, es gibt keinen Server im Internet.
+[![CI](https://github.com/zoblon/iClaude/actions/workflows/ci.yml/badge.svg)](https://github.com/zoblon/iClaude/actions/workflows/ci.yml)
+
+Lokaler MCP-Server (als Desktop Extension) für iCloud-Kalender, -Kontakte und -Mail sowie für die Apps Erinnerungen und Notizen auf deinem Mac. Er läuft nur auf deinem Mac, es gibt keinen Server im Internet.
 
 Die Oberfläche der Erweiterung ist auf Englisch: Werkzeugtitel, Beschreibungen, Einstellungsfelder und Fehlermeldungen. Claude antwortet trotzdem in deiner Sprache.
 
@@ -13,6 +15,7 @@ Die Oberfläche der Erweiterung ist auf Englisch: Werkzeugtitel, Beschreibungen,
 - **Sendet nie.** Mails werden nur als Entwurf im Ordner »Entwürfe« angelegt. Du prüfst und sendest sie selbst in Apple Mail.
 - **Löscht Mails nie endgültig.** `trash_message` verschiebt sie in den Papierkorb, dort sind sie etwa 30 Tage wiederherstellbar.
 - **Löscht nur eigene Termine und nur mit Sicherung.** `delete_event` legt vorher eine `.ics`-Sicherung an und liefert den Termin vollständig zurück. Beim Verschieben in einen anderen Kalender wird das Original erst entfernt, nachdem die Kopie angelegt und gegengelesen wurde; auch dabei gibt es vorher eine `.ics`-Sicherung.
+- **Erinnerungen und Notizen: nichts wird je gelöscht.** Erinnerungen lassen sich anlegen, ändern und abhaken; Notizen werden nur neu angelegt. Bestehende Notizen werden nie geändert, verschoben oder gelöscht, gesperrte Notizen nie geöffnet.
 - **Schreibt in geteilte Kalender nur auf ausdrückliche Nennung.** Kontakte werden nur auf Anfrage angelegt oder geändert (`update_contact` sichert die Karte vorher) und nie gelöscht. Einladungen und Teilnehmer gibt es nicht.
 
 <details>
@@ -22,6 +25,8 @@ Die Oberfläche der Erweiterung ist auf Englisch: Werkzeugtitel, Beschreibungen,
 - [App-spezifisches Passwort erstellen](#app-spezifisches-passwort-erstellen)
 - [Installation](#installation)
 - [Werkzeuge](#werkzeuge)
+- [Erinnerungen und Notizen: macOS-Freigabe](#erinnerungen-und-notizen-macos-freigabe)
+- [Was iClaude auszeichnet](#was-iclaude-auszeichnet)
 - [Nutzung vom Handy und in geplanten Aufgaben](#nutzung-vom-handy-und-in-geplanten-aufgaben)
 - [Update auf eine neue Version](#update-auf-eine-neue-version)
 - [Sicherungen gelöschter Termine](#sicherungen-gelöschter-termine)
@@ -36,7 +41,7 @@ Die Oberfläche der Erweiterung ist auf Englisch: Werkzeugtitel, Beschreibungen,
 ## Voraussetzungen
 
 - Ein Mac mit **Claude Desktop**. Node.js musst du nicht installieren, Claude Desktop bringt es mit.
-- Ein **iCloud-Konto** mit eingeschaltetem Kalender, Kontakte und Mail.
+- Ein **iCloud-Konto** mit eingeschaltetem Kalender, Kontakte und Mail. Für Erinnerungen und Notizen müssen diese Apps auf dem Mac bei iCloud (oder den Konten, die du dort nutzt) angemeldet sein.
 - **Zwei-Faktor-Authentifizierung** für deine Apple-ID. Ohne sie bietet Apple keine app-spezifischen Passwörter an.
 
 ## App-spezifisches Passwort erstellen
@@ -69,7 +74,7 @@ Hinweise:
    | Default calendar for new events | Name eines **privaten Termin-Kalenders**, zum Beispiel `Termine`. Keine Erinnerungsliste und kein geteilter Kalender. Leer lassen geht auch, dann muss jeder neue Termin einen Kalender nennen. |
 
 4. Die Erweiterung einschalten.
-5. **Die Löschwerkzeuge, `update_event`, `update_contact`, `move_message` und `set_message_flags` auf »Nachfragen« stellen:** unter *Einstellungen → Erweiterungen* (je nach Version *Anpassen → Konnektoren*) bei **iClaude** die Werkzeuge `delete_event`, `trash_message`, `update_event`, `update_contact`, `move_message` und `set_message_flags`. Dann fragt Claude vor jedem Löschen, Ändern, Verschieben oder Markieren nach. (`update_event` deckt auch das Verschieben eines Termins in einen anderen Kalender ab, wobei das Original im alten Kalender entfernt wird.)
+5. **Die Löschwerkzeuge, `update_event`, `update_contact`, `update_reminder`, `move_message` und `set_message_flags` auf »Nachfragen« stellen:** unter *Einstellungen → Erweiterungen* (je nach Version *Anpassen → Konnektoren*) bei **iClaude** die Werkzeuge `delete_event`, `trash_message`, `update_event`, `update_contact`, `update_reminder`, `move_message` und `set_message_flags`. Dann fragt Claude vor jedem Löschen, Ändern, Verschieben oder Markieren nach. (`update_event` deckt auch das Verschieben eines Termins in einen anderen Kalender ab, wobei das Original im alten Kalender entfernt wird.)
 6. Testen, zum Beispiel mit »Welche Kalender siehst du?« und »Was steht diese Woche an?«. Geteilte Kalender sind in der Antwort als geteilt markiert.
 
 ## Werkzeuge
@@ -88,6 +93,11 @@ Hinweise:
 | **`move_message`** | Mails in einen anderen Ordner verschieben (nicht Papierkorb, Entwürfe, Gesendet, Junk) | **verschieben** (siehe unten) |
 | **`set_message_flags`** | Mails als gelesen/ungelesen oder markiert/nicht markiert setzen | **schreiben**, nur diese beiden Markierungen |
 | **`trash_message`** | Mails in den Papierkorb verschieben | **verschieben** (siehe unten) |
+| `list_reminder_lists`, `list_reminders`, `search_reminders` | Apple Erinnerungen lesen | nur lesen |
+| `create_reminder`, `complete_reminder` | Erinnerungen anlegen (in einer genannten Liste oder der Standardliste); bis zu 20 abhaken oder wieder öffnen | schreiben; kein Löschen |
+| **`update_reminder`** | Titel, Notizen, Fälligkeit oder Priorität einer Erinnerung ändern | **schreiben**; der aktuelle Titel wird vorher geprüft |
+| `list_note_folders`, `list_notes`, `search_notes`, `get_note` | Apple Notizen lesen (Text oder Markdown, seitenweise); gesperrte Notizen werden nur gemeldet | nur lesen |
+| `create_note` | Neue Notiz anlegen (Markdown oder Klartext) | schreiben; nur neue Notizen, geteilte Ordner nur mit `shared_folder` |
 
 Termine mit Teilnehmern oder von anderen organisierte Termine werden nie geändert oder verschoben. Bei Serien lässt sich ein einzelnes Vorkommen ändern (`occurrence_start`), die ganze Serie ändern, verschieben oder löschen; einzelne Vorkommen werden nie gelöscht.
 
@@ -141,6 +151,25 @@ Höchstens 20 Mails pro Aufruf.
 - **`set_message_flags`** setzt bis zu 50 Mails auf gelesen/ungelesen und/oder markiert/nicht markiert (`\Seen` und `\Flagged` sind die einzigen Markierungen, die der Code setzen kann). Gleiche Prüfung von `id`, `subject` und `from`; das Ergebnis zeigt den vorherigen Zustand.
 - **Weiterleiten:** `create_draft` mit `forward_of_id` legt einen Entwurf »Fwd: …« an, mit Weiterleitungsblock im Stil von Apple Mail (Von, Betreff, Datum, An) und dem Text der Originalmail (`quote: false`: nur der Block). Die Anhänge der Originalmail werden mitgenommen, standardmäßig alle oder die in `forward_attachment_ids` genannten, insgesamt höchstens 20 MB. Es bleibt ein Entwurf im Ordner »Entwürfe«; gesendet wird von dir.
 
+## Erinnerungen und Notizen: macOS-Freigabe
+
+Für Erinnerungen und Notizen bietet iCloud keine offene Schnittstelle. iClaude steuert deshalb die beiden Apps auf deinem Mac (mit JavaScript for Automation, `osascript`). Dafür verlässt nichts den Mac, und es ist kein Passwort im Spiel.
+
+- **Einmalige Abfrage:** Beim ersten Mal, wenn ein Werkzeug Erinnerungen oder Notizen nutzt, fragt macOS, ob Claude die App steuern darf (»Claude möchte Erinnerungen steuern«). Mit **OK** beantworten. Bis du antwortest, wartet der Aufruf (bis zu zwei Minuten) und bricht dann ab. Später lässt es sich unter *Systemeinstellungen → Datenschutz & Sicherheit → Automation* ändern; meldet ein Werkzeug eine fehlende Freigabe, dort die App einschalten.
+- **Der Mac muss wach sein** und Claude Desktop laufen, wie bei allem anderen. Erinnerungen und Notizen werden bei Bedarf im Hintergrund gestartet. Der erste Aufruf nach dem Start der App kann ein paar Sekunden länger dauern.
+- **Erinnerungen:** Apple sagt nicht, ob eine Erinnerungsliste geteilt ist. `create_reminder` schreibt deshalb nur in eine Liste, die du nennst, oder in die Standardliste. Eine Fälligkeit lässt sich setzen und ändern, aber nicht entfernen (das kann Apples Skriptschnittstelle nicht). `update_reminder` prüft zuerst den aktuellen Titel und gehört auf »Nachfragen«.
+- **Notizen:** Es werden nur neue Notizen angelegt, im Standardordner oder einem genannten Ordner. Ein geteilter Ordner wird nur mit `shared_folder` benutzt. Mit Passwort gesperrte Notizen werden als gesperrt gemeldet und nie geöffnet. Bestehende Notizen werden nie geändert, weil das erneute Schreiben des HTML-Inhalts Bilder, Anhänge, Tabellen und Formatierung zerstören würde.
+- Beide Apps gibt es nur auf macOS. Auf anderen Systemen antworten die Werkzeuge, dass sie nur auf macOS laufen.
+
+## Was iClaude auszeichnet
+
+- **Lokal.** Eine Desktop Extension auf deinem Mac; kein Server von uns dazwischen, keine Telemetrie.
+- **Sendet nie.** Mail wird höchstens zum Entwurf. Einladungen werden nie beantwortet.
+- **Kein endgültiges Löschen.** Mails gehen in den Papierkorb, Erinnerungen und Notizen werden nie gelöscht, Kontakte nie gelöscht, Termine nur nach einer Sicherung.
+- **Sicherungen vor Änderungen** an Terminen (`.ics`) und Kontakten (`.vcf`).
+- **Die Rechte stecken im Code**, nicht nur in den Werkzeugbeschreibungen, und Wächtertests schlagen an, wenn ein verbotener Weg auftaucht.
+- **An echten Konten geprüft, mit klar genannten Grenzen.** [`docs/ICLOUD-NOTES.md`](docs/ICLOUD-NOTES.md) hält fest, was live gemessen wurde und was nur gegen simulierte Server getestet ist.
+
 ## Nutzung vom Handy und in geplanten Aufgaben
 
 Der Konnektor läuft **auf deinem Mac**, als Teil von Claude Desktop. Er ist also nur erreichbar, wenn der Mac wach ist und Claude Desktop läuft. Einen Server im Internet, der stellvertretend einspringt, gibt es nicht.
@@ -162,7 +191,7 @@ Für dieses Projekt heißt das: Lesen, Termine anlegen und Entwürfe funktionier
 2. Unter *Einstellungen → Erweiterungen* prüfen, ob die Felder noch gefüllt sind. **Anthropic dokumentiert nicht, ob die Einstellungen beim Überinstallieren erhalten bleiben.** Claude Desktop speichert sie zwar getrennt von den Programmdateien, halte zur Sicherheit aber das App-Passwort bereit oder erstelle ein neues.
 3. Die Freigaben prüfen: `delete_event`, `trash_message`, `update_event`, `update_contact`, `move_message` und `set_message_flags` auf »Nachfragen«, neu hinzugekommene Werkzeuge bewusst einstellen.
 
-Seit Version 0.2.1 heißt die Erweiterung in Claude Desktop **iClaude**, vorher »iCloud: Kalender, Kontakte, Mail«. Gespeicherte Aufgaben oder Anweisungen, die den alten Namen nennen, bitte anpassen.
+Version 0.4.0 bringt Erinnerungen und Notizen; beim ersten Benutzen fragt macOS einmal nach der oben beschriebenen Freigabe. Seit Version 0.2.1 heißt die Erweiterung in Claude Desktop **iClaude**, vorher »iCloud: Kalender, Kontakte, Mail«. Gespeicherte Aufgaben oder Anweisungen, die den alten Namen nennen, bitte anpassen.
 
 ## Sicherungen gelöschter Termine
 
@@ -174,8 +203,10 @@ Seit Version 0.2.1 heißt die Erweiterung in Claude Desktop **iClaude**, vorher 
 
 ## Datenschutz
 
+Siehe auch [`PRIVACY.md`](PRIVACY.md) und [`SECURITY.md`](SECURITY.md) (Sicherheitslücken melden).
+
 - **Zugangsdaten** liegen im macOS-Schlüsselbund. Der Konnektor schreibt sie nirgends hin und nennt sie in keiner Fehlermeldung.
-- **Inhalte:** Was Claude über den Konnektor liest, also Termine, Kontakte und Mails, wird wie jede andere Chatnachricht an Anthropic übertragen und dort verarbeitet. Der Konnektor selbst verbindet sich nur mit den Servern von iCloud.
+- **Inhalte:** Was Claude über den Konnektor liest, also Termine, Kontakte, Mails, Erinnerungen und Notizen, wird wie jede andere Chatnachricht an Anthropic übertragen und dort verarbeitet. Der Konnektor selbst verbindet sich nur mit den Servern von iCloud.
 - **Protokolle:** Claude Desktop protokolliert die Nachrichten zwischen Claude und dem Konnektor in `~/Library/Logs/Claude/mcp-server-*.log`, **einschließlich der Ergebnisse**, also auch Termin- und Mailinhalte. Der Konnektor selbst schreibt keine Inhalte ins Protokoll, die App aber schon. Wer ein Protokoll zur Fehlersuche weitergibt, kopiert vorher nur die Statuszeilen heraus.
 - **Fremde Inhalte:** Mail- und Termintexte gibt der Konnektor ausdrücklich als Fremdinhalt an Claude weiter, damit Anweisungen in einer Mail nicht als Auftrag verstanden werden.
 
@@ -188,6 +219,8 @@ Seit Version 0.2.1 heißt die Erweiterung in Claude Desktop **iClaude**, vorher 
 | »Calendar … not found« beim Anlegen | Der Standardkalender ist falsch geschrieben, gehört zu einer Erinnerungsliste oder existiert nicht mehr. Die Fehlermeldung nennt die privaten Kalender, einen davon unter *Einstellungen → Erweiterungen → iClaude* eintragen. |
 | »… is a shared calendar« | Gewollt. In geteilte Kalender schreibt der Konnektor nur, wenn du den Kalender ausdrücklich nennst, etwa »trag das in den Kalender <Name> ein«. Als Standardkalender ist ein geteilter Kalender nicht erlaubt. |
 | Termin lässt sich nicht ändern, verschieben oder löschen | Der Termin hat Teilnehmer, wurde von jemand anderem organisiert, liegt in einem geteilten Kalender (Löschen und Verschieben daraus werden immer verweigert; Ändern braucht `shared_calendar`) oder du wolltest ein einzelnes Vorkommen einer Serie löschen. Die Meldung nennt den Grund. Solche Termine in Apple Kalender selbst bearbeiten. |
+| »macOS hat iClaude nicht erlaubt, Erinnerungen/Notizen zu steuern« | *Systemeinstellungen → Datenschutz & Sicherheit → Automation* öffnen, Claude suchen und Erinnerungen / Notizen einschalten. Gibt es keinen Eintrag, das Werkzeug noch einmal aufrufen und die macOS-Frage mit OK beantworten. |
+| Ein Werkzeug für Erinnerungen/Notizen wartet anfangs lange | macOS wartet auf deine Antwort zur Freigabe (siehe oben), oder die App startet gerade. |
 | Werkzeuge fehlen in Claude | Ist die Erweiterung unter *Einstellungen → Erweiterungen* eingeschaltet? Claude Desktop mit ⌘Q ganz beenden und neu starten. Hilft das nicht, in `~/Library/Logs/Claude/mcp-server-*.log` nach Statuszeilen wie Start, Verbindung und Fehler schauen. |
 | Vom iPhone aus keine Werkzeuge | Der Mac schläft, ist aus oder Claude Desktop ist beendet. Siehe [Nutzung vom Handy](#nutzung-vom-handy-und-in-geplanten-aufgaben). |
 | Geplante Aufgabe ist nicht gelaufen | Der Mac hat zur geplanten Zeit geschlafen. Siehe [geplante Aufgaben](#nutzung-vom-handy-und-in-geplanten-aufgaben). |

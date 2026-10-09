@@ -2,7 +2,9 @@
 
 # iClaude: iCloud connector for Claude Desktop
 
-A local MCP server (packaged as a Desktop Extension) for iCloud Calendar, Contacts and Mail. It runs only on your Mac. There is no server on the internet.
+[![CI](https://github.com/zoblon/iClaude/actions/workflows/ci.yml/badge.svg)](https://github.com/zoblon/iClaude/actions/workflows/ci.yml)
+
+A local MCP server (packaged as a Desktop Extension) for iCloud Calendar, Contacts and Mail, and for the Apple Reminders and Notes apps on your Mac. It runs only on your Mac. There is no server on the internet.
 
 [Deutsch](README.de.md)
 
@@ -11,6 +13,7 @@ A local MCP server (packaged as a Desktop Extension) for iCloud Calendar, Contac
 - **Never sends.** Mails are only created as drafts (also forwards, with attachments) in the Drafts folder. You review and send them yourself in Apple Mail.
 - **Never deletes mails permanently.** `trash_message` moves them to the Trash, where they can be recovered for about 30 days.
 - **Deletes only your own events, and only with a backup.** `delete_event` first saves an `.ics` backup and returns the full event. Moving an event to another calendar removes the original only after the copy was created and read back, and also saves an `.ics` backup first.
+- **Reminders and Notes: nothing is ever deleted.** Reminders can be created, changed and completed; notes can only be created. Existing notes are never changed, moved or deleted, and locked notes are never opened.
 - **Writes to shared calendars only when you name them explicitly.** Contacts are only created or changed on request (`update_contact` backs the card up first) and are never deleted. Invitations and attendees are not supported.
 
 <details>
@@ -20,6 +23,8 @@ A local MCP server (packaged as a Desktop Extension) for iCloud Calendar, Contac
 - [Create an app-specific password](#create-an-app-specific-password)
 - [Installation](#installation)
 - [Tools](#tools)
+- [Reminders and Notes: macOS permission](#reminders-and-notes-macos-permission)
+- [How iClaude differs](#how-iclaude-differs)
 - [Use from your phone and in scheduled tasks](#use-from-your-phone-and-in-scheduled-tasks)
 - [Updating to a new version](#updating-to-a-new-version)
 - [Backups of deleted events](#backups-of-deleted-events)
@@ -34,7 +39,7 @@ A local MCP server (packaged as a Desktop Extension) for iCloud Calendar, Contac
 ## Requirements
 
 - A Mac with **Claude Desktop**. You don't need to install Node.js, Claude Desktop ships with it.
-- An **iCloud account** with Calendar, Contacts and Mail turned on.
+- An **iCloud account** with Calendar, Contacts and Mail turned on. For Reminders and Notes, those apps on the Mac must be signed in to iCloud (or whatever accounts you use there).
 - **Two-factor authentication** for your Apple ID. Without it, Apple doesn't offer app-specific passwords.
 
 ## Create an app-specific password
@@ -67,7 +72,7 @@ Notes:
    | Default calendar for new events | Name of a **private event calendar**, for example `Home`. Not a reminders list and not a shared calendar. You can leave it empty; then every new event has to name a calendar. |
 
 4. Enable the extension.
-5. **Set the delete tools, `update_event`, `update_contact`, `move_message` and `set_message_flags` to require approval:** in *Settings > Extensions* (depending on the version *Customize > Connectors*), under **iClaude**, for the tools `delete_event`, `trash_message`, `update_event`, `update_contact`, `move_message` and `set_message_flags`. Claude then asks before every deletion, change, move or marking. (`update_event` also covers moving an event to another calendar, which removes the original from the old one.)
+5. **Set the delete tools, `update_event`, `update_contact`, `update_reminder`, `move_message` and `set_message_flags` to require approval:** in *Settings > Extensions* (depending on the version *Customize > Connectors*), under **iClaude**, for the tools `delete_event`, `trash_message`, `update_event`, `update_contact`, `update_reminder`, `move_message` and `set_message_flags`. Claude then asks before every deletion, change, move or marking. (`update_event` also covers moving an event to another calendar, which removes the original from the old one.)
 6. Try it, for example with "Which calendars can you see?" and "What's on this week?". Shared calendars are marked as shared in the answer.
 
 The extension's interface (tool titles, descriptions, error messages) is in English. Claude still answers in your language.
@@ -88,6 +93,11 @@ The extension's interface (tool titles, descriptions, error messages) is in Engl
 | **`move_message`** | Move mails to another folder (not the Trash, Drafts, Sent or Junk) | **move** (see below) |
 | **`set_message_flags`** | Mark mails read/unread or flagged/not flagged | **write**, only these two marks |
 | **`trash_message`** | Move mails to the Trash | **move** (see below) |
+| `list_reminder_lists`, `list_reminders`, `search_reminders` | Read Apple Reminders | read-only |
+| `create_reminder`, `complete_reminder` | Create reminders (in a named list or the default list); mark up to 20 as completed or open again | write; no deleting |
+| **`update_reminder`** | Change title, notes, due date or priority of one reminder | **write**; the current title is checked first |
+| `list_note_folders`, `list_notes`, `search_notes`, `get_note` | Read Apple Notes (text or Markdown, paged); locked notes are only reported | read-only |
+| `create_note` | Create a new note (Markdown or plain text) | write; only new notes, shared folders only with `shared_folder` |
 
 Events with attendees and events organized by someone else are never changed or moved. For recurring series, a single occurrence can be changed (`occurrence_start`) and the whole series can be changed, moved or deleted; single occurrences are never deleted.
 
@@ -141,6 +151,25 @@ At most 20 mails per call.
 - **`set_message_flags`** marks up to 50 mails read/unread and/or flagged/not flagged (`\Seen` and `\Flagged` are the only flags the code can set). Same check of `id`, `subject` and `from`; the result shows the previous state.
 - **Forwarding:** `create_draft` with `forward_of_id` creates a draft "Fwd: …" with a forwarding block in the style of Apple Mail (From, Subject, Date, To) and the text of the original (`quote: false`: only the block). The original's attachments are taken along, all by default or those listed in `forward_attachment_ids`, up to 20 MB in total. It is still only a draft in the Drafts folder; you send it yourself.
 
+## Reminders and Notes: macOS permission
+
+iCloud has no open interface for Reminders and Notes, so iClaude controls the two apps on your Mac (with JavaScript for Automation, `osascript`). Nothing leaves the Mac for this, and no password is involved.
+
+- **One-time question:** the first time a tool uses Reminders or Notes, macOS asks whether Claude may control that app ("Claude would like to control Reminders"). Answer **OK**. Until you answer, the call waits (up to two minutes) and then stops. Later you can change it in *System Settings > Privacy & Security > Automation*; if a tool reports a missing permission, turn the app on there.
+- **The Mac has to be awake** and Claude Desktop running, as for everything else. Reminders and Notes are started in the background when needed. The first call after the app was started can take a few seconds longer.
+- **Reminders:** Apple does not say whether a reminder list is shared, so `create_reminder` writes only into a list you name or into the default list. A due date can be set or changed but not removed (Apple's scripting interface cannot do that). `update_reminder` checks the current title first, so set it to *require approval*.
+- **Notes:** only new notes are created, in the default folder or a named folder. A shared folder is used only with `shared_folder`. Notes locked with a password are listed as locked and never opened. Existing notes are never changed, because writing a note's HTML again would destroy images, attachments, tables and formatting.
+- Both apps only work on macOS. On other systems the tools answer that they are macOS-only.
+
+## How iClaude differs
+
+- **Local.** One Desktop Extension on your Mac; no server of ours in between, no telemetry.
+- **It never sends.** Mail only ever becomes a draft. Invitations are never answered.
+- **No permanent deletion.** Mails go to the Trash, reminders and notes are never deleted, contacts are never deleted, and events are deleted only after a backup.
+- **Backups before changes** to events (`.ics`) and contacts (`.vcf`).
+- **Rights live in the code**, not only in the tool descriptions, and guard tests fail if a forbidden path appears.
+- **Checked against real accounts, with the limits stated.** [`docs/ICLOUD-NOTES.md`](docs/ICLOUD-NOTES.md) lists what was measured live and what has only been tested against simulated servers.
+
 ## Use from your phone and in scheduled tasks
 
 The connector runs **on your Mac**, as part of Claude Desktop. It is only reachable while the Mac is awake and Claude Desktop is running. There is no server on the internet that steps in.
@@ -162,7 +191,7 @@ For this project that means: reading, creating events and drafts work in schedul
 2. Check in *Settings > Extensions* that the fields are still filled in. **Anthropic doesn't document whether settings are kept when installing over an existing version.** Claude Desktop stores them separately from the program files, but keep the app-specific password at hand or create a new one, just in case.
 3. Check the permissions: `delete_event`, `trash_message`, `update_event`, `update_contact`, `move_message` and `set_message_flags` set to require approval, and set any newly added tools deliberately.
 
-Since version 0.2.1 the extension is called **iClaude** in Claude Desktop; before that it was "iCloud: Kalender, Kontakte, Mail". Please update saved tasks or instructions that use the old name.
+Version 0.4.0 adds Reminders and Notes; the first use of each asks for the macOS permission described above. Since version 0.2.1 the extension is called **iClaude** in Claude Desktop; before that it was "iCloud: Kalender, Kontakte, Mail". Please update saved tasks or instructions that use the old name.
 
 ## Backups of deleted events
 
@@ -174,8 +203,10 @@ Since version 0.2.1 the extension is called **iClaude** in Claude Desktop; befor
 
 ## Privacy
 
+See also [`PRIVACY.md`](PRIVACY.md) and [`SECURITY.md`](SECURITY.md) (how to report a vulnerability).
+
 - **Credentials** are stored in the macOS Keychain. The connector doesn't write them anywhere and never includes them in error messages.
-- **Content:** what Claude reads through the connector, i.e. events, contacts and mails, is sent to Anthropic and processed there like any other chat message. The connector itself only connects to iCloud servers.
+- **Content:** what Claude reads through the connector, i.e. events, contacts, mails, reminders and notes, is sent to Anthropic and processed there like any other chat message. The connector itself only connects to iCloud servers.
 - **Logs:** Claude Desktop logs the messages between Claude and the connector in `~/Library/Logs/Claude/mcp-server-*.log`, **including the results**, so event and mail content as well. The connector itself writes no content to the log, but the app does. If you share a log for troubleshooting, copy out only the status lines first.
 - **Untrusted content:** the connector explicitly passes mail and event text to Claude as untrusted content, so that instructions inside a mail aren't treated as a request.
 
@@ -188,6 +219,8 @@ Since version 0.2.1 the extension is called **iClaude** in Claude Desktop; befor
 | "Calendar … not found" when creating an event | The default calendar is misspelled, belongs to a reminders list or no longer exists. The error message lists the private calendars; enter one of them in *Settings > Extensions > iClaude*. |
 | "… is a shared calendar" | Intended. The connector only writes to shared calendars when you name the calendar explicitly, for example "add this to the <name> calendar". A shared calendar is not allowed as the default calendar. |
 | An event can't be changed, moved or deleted | The event has attendees, was organized by someone else, is in a shared calendar (deleting and moving out of it are always refused; changing needs `shared_calendar`) or you asked to delete a single occurrence of a series. The message states the reason. Edit such events yourself in Apple Calendar. |
+| "macOS has not allowed iClaude to control Reminders/Notes" | Open *System Settings > Privacy & Security > Automation*, find Claude and turn on Reminders / Notes. If there is no entry, call the tool again and answer the macOS question with OK. |
+| A Reminders/Notes tool waits a long time at first | macOS is waiting for your answer to the permission question (see above), or the app is starting. |
 | Tools are missing in Claude | Is the extension enabled in *Settings > Extensions*? Quit Claude Desktop completely with ⌘Q and restart it. If that doesn't help, look for status lines such as start, connection and errors in `~/Library/Logs/Claude/mcp-server-*.log`. |
 | No tools from the iPhone | The Mac is asleep or turned off, or Claude Desktop has quit. See [Use from your phone](#use-from-your-phone-and-in-scheduled-tasks). |
 | A scheduled task didn't run | The Mac was asleep at the scheduled time. See [scheduled tasks](#use-from-your-phone-and-in-scheduled-tasks). |

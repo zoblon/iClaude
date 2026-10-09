@@ -22,6 +22,8 @@ npm run imap-capabilities   # iCloud Mail capabilities after sign-in and folder 
 manifest.json            Desktop Extension manifest (0.3), user_config, tool list
 src/core/                domain logic, knows nothing about MCP (reusable for a later hosted connector)
   calendar/ contacts/ mail/   access (tsdav / imapflow), processing and service for each
+  automation/            osascript runner and the fixed JXA scripts (scripts/*.ts) for Reminders and Notes
+  reminders/ notes/      services on top of the runner (backend interface + grants), Markdown to Notes HTML
   permissions.ts         central permission checks (WriteGrant for create/update/delete, DraftGrant, TrashGrant, MoveGrant, FlagGrant, ContactWriteGrant)
   contacts/vcardEdit.ts  line-level vCard editing (create and change contact cards without re-serializing)
   calendar/backup.ts     .ics / .vcf backup before deleting, moving or changing, cleanup (90 days / 200 files)
@@ -46,11 +48,25 @@ These rules are the core of the project. They are enforced in code, not just in 
 - **No sending:** no SMTP in the code. Mail can be marked only with `set_message_flags`: IMAP `STORE` of exactly `\Seen` and `\Flagged` (`ALLOWED_STORE_FLAGS`, enforced by the `FlagGrant`; `\Deleted`, `\Draft`, `\Answered` and keywords are never set). A guard test checks that `STORE` exists only in `setFlags`.
 - **Contacts:** only single cards are created (`PUT` with `If-None-Match: *`) or changed (`PUT` with `If-Match`), always with a `ContactWriteGrant`. `update_contact` saves a `.vcf` backup first (`contacts-backup/`, same rules as the `.ics` backup). No `DELETE` on CardDAV, no tool to delete contacts or groups, group cards are never written (the grant refuses them). `ical.js` must not re-serialize a vCard (see ICLOUD-NOTES.md): edit on the line level.
 - **No invitations:** `create_event` and `update_event` set no attendees. Events with attendees or another organizer are not changed or moved. A single occurrence of a series is changed by an override VEVENT with `RECURRENCE-ID` in the same resource (`locateOccurrence`, `applyOccurrencePatch`); master and other overrides stay byte-for-byte equal as jCal (checked inside the function); deleting single occurrences is still refused. `import_invitation` builds the new event from a whitelist of properties (no ATTENDEE, ORGANIZER, METHOD, X- properties), under a new UID, and never sends anything (no iTIP, no REPLY).
+- **Automation (Reminders, Notes):** see "Automation pattern" below. Rights: `ReminderGrant` (create in a named list or the default list, update, complete up to 20; no grant exists for deleting), `NoteGrant` (creating ONE new note, in the default folder, a named folder, or a shared folder only with `shared_folder`; no grant exists for changing, moving or deleting notes). Apple's scripting interface does not say whether a reminder list is shared, so there is no `shared_list`; Notes does (`folder.shared`).
 - **Shared calendars** (marked `shared: true` in `list_calendars`) only with an explicit `shared_calendar="<name>"`. Never run live tests in shared calendars.
 - **Reading mail without side effects:** open folders read-only (`EXAMINE`) and use `BODY.PEEK` (also for `read_attachment`, which fetches just one part). Drafts only via `APPEND` with `\Draft` into the Drafts folder; a forward draft carries only the original's attachments (at most 20 MB), re-encoded as Base64.
 - **Untrusted content:** output mail and event content delimited as untrusted content. No content and no credentials in logs; sanitize error messages.
 - **Credentials** only as `user_config` with `sensitive: true` (macOS Keychain) or locally in `.env`, which is never committed. Separate logins for CalDAV/CardDAV (Apple ID) and IMAP (`@icloud.com`).
 - Do not change the extension's internal identifier (`name: icloud-connector` in the manifest). Otherwise an update creates a second, empty extension. `test/manifest.test.ts` guards this.
+
+## Automation pattern (Reminders and Notes)
+
+iCloud has no open interface for Reminders and Notes, so iClaude controls the apps on the Mac with `/usr/bin/osascript -l JavaScript` (`src/core/automation/runner.ts`). The rules, enforced by `test/automation.test.ts`:
+
+- **Fixed scripts.** Every script is a constant string in its own file under `src/core/automation/scripts/` (`String.raw` without placeholders) and is registered in `scripts/index.ts`. Nothing is assembled at run time: no template placeholders, no string building, no `eval`/`Function`, no `doShellScript`, no `ObjC`, no `System Events`, no delete/remove/move verbs. Each script controls exactly the one app it declares.
+- **Input as one JSON argument.** The runner starts `osascript -l JavaScript -e <script text> <json>` with `execFile` (no shell). The script reads `argv[0]` with `JSON.parse` and nothing else. A test proves with hostile input (quotes, line breaks, `do shell script`, backticks) that the script text never changes and that nothing is executed (against the real osascript on a Mac).
+- **Output as one JSON text** `{ok: true, data}` or `{ok: false, code, message}`, validated with Zod. Scripts report problems with fixed texts only; error messages never repeat app output.
+- **Dates** go in as ISO 8601 (or `YYYY-MM-DD` parts for all-day) and are turned into `Date` objects inside the script. Never use localized AppleScript date text.
+- **Timeouts:** 120 s for the first call per app (the macOS permission question), 30 s afterwards, some scripts longer; then the process is killed (`SIGKILL`). Error `-1743` becomes the way to System Settings > Privacy & Security > Automation. One script at a time.
+- **Only on macOS.** On other systems the runner throws "only available on macOS"; unit tests replace the runner with a fake, CI (Linux) never starts osascript.
+- **Speed:** every Apple event to Reminders can take 0.5 s on a cold app. Read properties as bulk arrays over a whole collection (`app.reminders.name()`), filter with `whose`, never loop over items asking for properties one by one. See ICLOUD-NOTES.md for measurements.
+- **Adding a script:** new file in `scripts/`, export it from `index.ts`, call it only from a service whose writing methods require a grant from `permissions.ts`. The guard tests pick it up automatically.
 
 ## Known pitfalls
 
@@ -64,4 +80,12 @@ These rules are the core of the project. They are enforced in code, not just in 
 
 ## Releases
 
-Bump the version in `package.json` (the build script copies it into the manifest), run `npm test` and `npm run build:mcpb`, then attach the file from `dist/` to a GitHub release tagged `v<version>`. The `.mcpb` does not belong in the repository.
+Releases are made by the workflow `.github/workflows/release.yml` (tests, build, publish). Do not run `gh release create` by hand.
+
+1. Raise the version in `package.json` (`npm version <version> --no-git-tag-version`; the build script copies it into the manifest, and `manifest.json` has to carry the same number) and in `src/mcp/server.ts`.
+2. Write the release text in English as `docs/releases/v<version>.md`.
+3. Run `npm run typecheck`, `npm test` and `npm run build:mcpb`; commit and push to `main`.
+4. `git tag v<version> && git push origin v<version>`. The workflow checks that the tag matches `package.json`, runs the tests, builds the `.mcpb` and creates the GitHub release with the release text. Follow it with `gh run watch`.
+5. Check that the `.mcpb` hangs on the release (`gh release view v<version>`), download it (`gh release download v<version>`) and open it to install the update.
+
+The `.mcpb` does not belong in the repository. Make sure the tag points at the commit that carries the new version, and that a push to `main` really succeeded before the tag is pushed.

@@ -16,6 +16,8 @@ Especially relevant are ways in which iClaude could:
 - delete mail permanently, or delete events or contacts outside the documented, backed-up paths,
 - write to a shared calendar without it being named explicitly,
 - follow instructions contained in mail, event or contact content,
+- delete or change reminders or existing notes, open locked notes, or write to a shared folder without it being named,
+- run anything other than the fixed scripts through the Reminders and Notes automation (for example by crafting the text of a reminder, note or mail),
 - leak credentials into logs, error messages or tool results.
 
 ## Supported versions

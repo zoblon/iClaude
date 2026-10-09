@@ -90,6 +90,20 @@ describe('manifest.json', () => {
     expect(manifest.long_description).toMatch(/iCloud itself cannot restore individual deleted events/);
   });
 
+  it('names the privacy policy, which exists in the repository and covers Reminders and Notes', () => {
+    expect(manifest.privacy_policies).toEqual(['https://github.com/zoblon/iClaude/blob/main/PRIVACY.md']);
+    const privacy = readFileSync('PRIVACY.md', 'utf8');
+    expect(privacy).toMatch(/Reminders and Notes/);
+    expect(privacy).toMatch(/no network connection/);
+    expect(readFileSync('SECURITY.md', 'utf8')).toMatch(/Reminders/);
+  });
+
+  it('the descriptions mention Reminders and Notes and the Mac permission', () => {
+    expect(manifest.description).toMatch(/Reminders and Notes/);
+    expect(manifest.long_description).toMatch(/macOS asks once for permission/);
+    expect(manifest.long_description).toMatch(/update_reminder/);
+  });
+
   it('the display name is iClaude and the extension ID stays unchanged (otherwise a second extension without settings would appear next to the installed one)', () => {
     expect(manifest.display_name).toBe('iClaude');
     expect(manifest.name).toBe('icloud-connector');
