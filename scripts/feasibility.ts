@@ -1,0 +1,124 @@
+/**
+ * Machbarkeitstest: meldet sich bei iCloud an und listet
+ * Kalender, Adressbücher und Mailordner auf.
+ *
+ * Ausgabe enthält nur Namen und Zahlen, keine Inhalte, keine Zugangsdaten.
+ * Start: npm run feasibility
+ */
+import { createDAVClient } from 'tsdav';
+import { ImapFlow } from 'imapflow';
+
+const env = (k: string) => (process.env[k] ?? '').trim();
+const appleId = env('ICLOUD_APPLE_ID');
+const mailUser = env('ICLOUD_MAIL_USER');
+const password = env('ICLOUD_APP_PASSWORD');
+
+const missing = ['ICLOUD_APPLE_ID', 'ICLOUD_MAIL_USER', 'ICLOUD_APP_PASSWORD'].filter((k) => !env(k));
+if (missing.length) {
+  console.error(`Fehlende Werte in .env: ${missing.join(', ')}`);
+  process.exit(1);
+}
+
+/** Zugangsdaten aus Fehlermeldungen entfernen. */
+function clean(e: unknown): string {
+  let m = e instanceof Error ? e.message : String(e);
+  for (const secret of [password, appleId, mailUser]) if (secret) m = m.split(secret).join('***');
+  return m.slice(0, 300);
+}
+
+async function step(name: string, fn: () => Promise<void>) {
+  console.log(`\n=== ${name} ===`);
+  try {
+    await fn();
+  } catch (e) {
+    console.log(`FEHLER: ${clean(e)}`);
+  }
+}
+
+const text = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v));
+
+await step('CalDAV', async () => {
+  const client = await createDAVClient({
+    serverUrl: 'https://caldav.icloud.com',
+    credentials: { username: appleId, password },
+    authMethod: 'Basic',
+    defaultAccountType: 'caldav',
+  });
+  const calendars = await client.fetchCalendars();
+  console.log(`${calendars.length} Kalender gefunden:`);
+  for (const c of calendars) {
+    const comps = Array.isArray(c.components) ? c.components.join(',') : '';
+    console.log(`- ${text(c.displayName)}  [${comps}]`);
+  }
+
+  // Rohdaten zur Erkennung geteilter Kalender: Eigentümer, Rechte, Einladungen.
+  console.log('\nEigenschaften zur Erkennung geteilter Kalender:');
+  const homeUrl = calendars[0]?.url?.replace(/[^/]+\/?$/, '');
+  if (homeUrl) {
+    const res = await client.propfind({
+      url: homeUrl,
+      depth: '1',
+      props: {
+        'd:displayname': {},
+        'd:resourcetype': {},
+        'd:owner': {},
+        'd:current-user-privilege-set': {},
+        'cs:shared-url': {},
+        'cs:invite': {},
+        'cs:source': {},
+      },
+    });
+    for (const r of res) {
+      const p = (r.props ?? {}) as Record<string, any>;
+      const rt = JSON.stringify(p.resourcetype ?? {});
+      const priv = JSON.stringify(p.currentUserPrivilegeSet ?? {}).match(/write|bind|unbind|all/g);
+      console.log(
+        `- ${text(p.displayname)} | resourcetype=${rt.slice(0, 120)} | owner=${text(p.owner?.href ?? p.owner).slice(0, 60)}` +
+          ` | invite=${p.invite ? 'ja' : 'nein'} | shared-url=${p.sharedUrl ? 'ja' : 'nein'}` +
+          ` | schreibrechte=${priv ? [...new Set(priv)].join('/') : 'keine'}`,
+      );
+    }
+  }
+});
+
+await step('CardDAV', async () => {
+  const client = await createDAVClient({
+    serverUrl: 'https://contacts.icloud.com',
+    credentials: { username: appleId, password },
+    authMethod: 'Basic',
+    defaultAccountType: 'carddav',
+  });
+  const books = await client.fetchAddressBooks();
+  console.log(`${books.length} Adressbuch/Adressbücher:`);
+  for (const b of books) {
+    const objs = await client.fetchVCards({ addressBook: b });
+    console.log(`- ${text(b.displayName)}  (${objs.length} Kontakte)`);
+  }
+});
+
+await step('IMAP', async () => {
+  const imap = new ImapFlow({
+    host: 'imap.mail.me.com',
+    port: 993,
+    secure: true,
+    auth: { user: mailUser, pass: password },
+    logger: false,
+  });
+  imap.on('error', () => {});
+  await imap.connect();
+  try {
+    const boxes = await imap.list({ statusQuery: { messages: true, unseen: true } });
+    console.log(`${boxes.length} Ordner:`);
+    for (const b of boxes) {
+      const su = b.specialUse ? `  [${b.specialUse}]` : '';
+      console.log(`- ${b.path}${su}  (${b.status?.messages ?? '?'} Mails, ${b.status?.unseen ?? '?'} ungelesen)`);
+    }
+    console.log(`\nServer-Fähigkeiten: ${['SPECIAL-USE', 'THREAD=REFERENCES', 'THREAD=ORDEREDSUBJECT', 'UIDPLUS', 'MOVE']
+      .map((c) => `${c}=${imap.capabilities.has(c) ? 'ja' : 'nein'}`)
+      .join(', ')}`);
+  } finally {
+    await imap.logout();
+  }
+});
+
+console.log('\nFertig.');

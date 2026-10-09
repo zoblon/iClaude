@@ -1,0 +1,45 @@
+{
+  "name": "icloud-mcp",
+  "version": "0.2.2",
+  "private": true,
+  "description": "Lokaler MCP-Server für iCloud-Kalender, -Kontakte und -Mail (Desktop Extension)",
+  "license": "MIT",
+  "author": "Tobi Rehkopf",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zoblon/iClaude.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "feasibility": "tsx --env-file=.env scripts/feasibility.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "tsx --env-file=.env src/stdio.ts",
+    "build:mcpb": "node scripts/build-mcpb.mjs",
+    "imap-capabilities": "tsx --env-file=.env scripts/imap-capabilities.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.3.1",
+    "ical.js": "^2.2.1",
+    "imapflow": "^2.2.11",
+    "luxon": "^3.7.2",
+    "mailparser": "^3.9.36",
+    "tsdav": "^2.4.0",
+    "turndown": "^7.2.4",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
+    "@types/luxon": "^3.7.6",
+    "@types/mailparser": "^3.9.0",
+    "@types/node": "^26.6.4",
+    "@types/turndown": "^5.0.6",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

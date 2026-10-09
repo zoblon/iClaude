@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+*.mcpb
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# Archive (z. B. gepackte .env) nie committen
+*.zip

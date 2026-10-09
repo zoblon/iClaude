@@ -1,0 +1,157 @@
+{
+  "manifest_version": "0.3",
+  "name": "icloud-connector",
+  "display_name": "iClaude",
+  "version": "0.2.2",
+  "description": "Lokaler Zugriff auf deine iCloud-Kalender, -Kontakte und -Mails. Sendet nie. Mails nur in den Papierkorb (nie endgültig löschen), eigene Termine nur mit Sicherung.",
+  "long_description": "Dieser Konnektor läuft ausschließlich auf deinem Mac (kein Server im Internet) und verbindet Claude mit iCloud.\n\nKalender: Termine lesen, suchen, freie Zeiten finden, Termine anlegen und ändern. Einladungen und Teilnehmer gibt es nicht. In geteilten Kalendern wird nur geschrieben, wenn du den Kalender ausdrücklich nennst. Löschen: Das Werkzeug »Termin löschen« löscht nur eigene Termine, einzeln und ganze Serien. Vorher sichert es den Termin als .ics-Datei in ~/Library/Application Support/icloud-mcp/deleted/ (90 Tage, höchstens 200 Dateien; Doppelklick stellt ihn in Apple Kalender wieder her) und liefert ihn vollständig zurück. Termine mit Teilnehmern, von anderen organisierte Termine, Termine in geteilten Kalendern und einzelne Vorkommen einer Serie werden nie gelöscht. iCloud selbst kann einzelne gelöschte Termine nicht wiederherstellen.\n\nKontakte: suchen und lesen (nur lesend).\n\nMail: Ordner, Posteingang und Suche, Nachrichten und Konversationen lesen (ohne etwas als gelesen zu markieren), Antworten und Entwürfe vorbereiten. Entwürfe landen im Ordner Entwürfe, du prüfst und sendest sie selbst in Apple Mail. Das Werkzeug »Mails in den Papierkorb verschieben« verschiebt höchstens 20 Mails je Aufruf in den Papierkorb, nach Prüfung von Betreff und Absender. Endgültig gelöscht wird nie; im Papierkorb sind die Mails etwa 30 Tage wiederherstellbar. Senden und Markieren gibt es nicht.\n\nEmpfehlung: Stelle die beiden Löschwerkzeuge in Claude Desktop (Einstellungen > Erweiterungen) auf »Nachfragen«. Geplante Aufgaben können sie dann nicht ausführen.\n\nDein App-spezifisches Passwort wird im macOS-Schlüsselbund gespeichert.",
+  "author": {
+    "name": "Tobi Rehkopf"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zoblon/iClaude.git"
+  },
+  "homepage": "https://github.com/zoblon/iClaude",
+  "license": "MIT",
+  "keywords": [
+    "icloud",
+    "kalender",
+    "kontakte",
+    "mail",
+    "calendar",
+    "contacts"
+  ],
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/index.mjs"
+      ],
+      "env": {
+        "ICLOUD_APPLE_ID": "${user_config.apple_id}",
+        "ICLOUD_MAIL_USER": "${user_config.mail_user}",
+        "ICLOUD_APP_PASSWORD": "${user_config.app_password}",
+        "ICLOUD_TIMEZONE": "${user_config.timezone}",
+        "ICLOUD_DEFAULT_CALENDAR": "${user_config.default_calendar}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "list_calendars",
+      "description": "Kalender auflisten (mit Kennzeichnung geteilter Kalender)"
+    },
+    {
+      "name": "list_events",
+      "description": "Termine in einem Zeitraum auflisten"
+    },
+    {
+      "name": "search_events",
+      "description": "Termine suchen"
+    },
+    {
+      "name": "find_free_slots",
+      "description": "Freie Zeiten finden"
+    },
+    {
+      "name": "create_event",
+      "description": "Termin anlegen (ohne Einladungen)"
+    },
+    {
+      "name": "update_event",
+      "description": "Termin ändern (nur eigene, ohne Teilnehmer)"
+    },
+    {
+      "name": "delete_event",
+      "description": "Eigenen Termin löschen (vorher als .ics gesichert; nie mit Teilnehmern oder in geteilten Kalendern)"
+    },
+    {
+      "name": "search_contacts",
+      "description": "Kontakte suchen"
+    },
+    {
+      "name": "get_contact",
+      "description": "Einen Kontakt abrufen"
+    },
+    {
+      "name": "list_mailboxes",
+      "description": "Mailordner auflisten"
+    },
+    {
+      "name": "unread_counts",
+      "description": "Ungelesene Mails zählen"
+    },
+    {
+      "name": "list_recent",
+      "description": "Neueste Mails eines Ordners"
+    },
+    {
+      "name": "search_messages",
+      "description": "Mails suchen"
+    },
+    {
+      "name": "get_message",
+      "description": "Eine Mail lesen (seitenweise, ohne sie als gelesen zu markieren)"
+    },
+    {
+      "name": "get_thread",
+      "description": "Eine Konversation lesen"
+    },
+    {
+      "name": "create_draft",
+      "description": "Mail-Entwurf oder Antwort-Entwurf anlegen (wird nie gesendet)"
+    },
+    {
+      "name": "trash_message",
+      "description": "Mails in den Papierkorb verschieben (höchstens 20, nie endgültig löschen)"
+    }
+  ],
+  "tools_generated": false,
+  "user_config": {
+    "apple_id": {
+      "type": "string",
+      "title": "Apple-ID (Mailadresse)",
+      "description": "Die Mailadresse deiner Apple-ID. Sie dient als Benutzername für Kalender und Kontakte.",
+      "required": true
+    },
+    "mail_user": {
+      "type": "string",
+      "title": "iCloud-Mailadresse",
+      "description": "Deine @icloud.com-Adresse, der Benutzername für Mail. Sie kann von der Apple-ID abweichen.",
+      "required": true
+    },
+    "app_password": {
+      "type": "string",
+      "title": "App-spezifisches Passwort",
+      "description": "Erzeugt unter account.apple.com > Anmeldung und Sicherheit > App-spezifische Passwörter. Nicht dein normales Apple-ID-Passwort.",
+      "sensitive": true,
+      "required": true
+    },
+    "timezone": {
+      "type": "string",
+      "title": "Zeitzone",
+      "description": "Zeitzone für Termine, z. B. Europe/Berlin.",
+      "default": "Europe/Berlin",
+      "required": false
+    },
+    "default_calendar": {
+      "type": "string",
+      "title": "Standardkalender für neue Termine",
+      "description": "Name eines privaten, nicht geteilten Kalenders, in den neue Termine ohne weitere Angabe kommen. Ohne Angabe werden Termine nur angelegt, wenn ein Kalender genannt wird.",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin"
+    ],
+    "runtimes": {
+      "node": ">=20.0.0"
+    }
+  }
+}
