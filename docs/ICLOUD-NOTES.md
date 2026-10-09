@@ -68,7 +68,17 @@ and carries no sharing markers counts as private.
 - One address book, empty display name; a contact's ID is the path of its file (`…/carddavhome/card/<UUID>.vcf`).
 - Apple links labels via group prefixes (`item1.EMAIL` + `item1.X-ABLabel:_$!<Work>!$_`); this is resolved to "Work".
 - Birthdays without a year are stored with the year 1604 or 1900; they are output as `--MM-DD`. Photos are never included.
-- Writing CardDAV functions are not used; a test ensures this. Contacts are not deleted in 0.2.0 either.
+- Birthdays and further dates: `BDAY;VALUE=date:1604-03-15` (placeholder year 1604, sometimes 1900; `X-APPLE-OMIT-YEAR` is also honoured). Further dates are `itemN.X-ABDATE` with an `itemN.X-ABLabel` (`_$!<Anniversary>!$_`); relationships are `itemN.X-ABRELATEDNAMES` (label e.g. `_$!<Spouse>!$_`); social profiles are `X-SOCIALPROFILE;type=twitter;x-user=name:url`; messengers are `IMPP;X-SERVICE-TYPE=Skype:skype:name` or `X-JABBER`, `X-AIM`, … ORG is `Company;Department;`.
+- Groups are vCards with `X-ADDRESSBOOKSERVER-KIND:group` and one `X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:<UID>` per member. They are only read; the group cards are skipped when contacts are parsed.
+
+### Changing contacts (0.3.0)
+
+- **`ical.js` must not re-serialize a vCard.** A test with `ICAL.stringify` showed that Apple's peculiarities are altered: group prefixes are capitalised (`item1` becomes `ITEM1`), several `type` parameters are merged, and `BDAY;VALUE=date:1604-03-15` becomes `16040315`. `src/core/contacts/vcardEdit.ts` therefore works on the text: the card is split into logical lines (a folded line keeps its original folding), only the touched properties and their `itemN.X-ABLabel` lines are changed, added or removed, and every other line is written out byte for byte. New lines are escaped (comma, semicolon, backslash, line break) and folded at 75 octets. New `itemN` groups never collide with existing ones. `test/contactWrite.test.ts` checks with a realistic Apple card (itemN groups, PHOTO, BDAY 1604, X-ABDATE, X-ABRELATEDNAMES, X-SOCIALPROFILE, multi-line NOTE) that changing a phone number leaves all other lines byte-identical.
+- `ical.js` also leaves `\;` in NOTE values escaped, so notes are decoded from the raw line.
+- Labels are written the way Apple does: Home and Work as `type=` parameters, Other, Main, HomePage and custom labels as `itemN.X-ABLabel` (`_$!<Other>!$_` for the built-in ones). This is based on the format of existing cards and **has not been checked against freshly created cards on iCloud yet** (no sign-in was available while this was written).
+- Creating: new UID, file name `<UID>.vcf`, `PUT` with `If-None-Match: *`. Updating: the card is loaded with GET (not from the cache), checked (name, optional ETag), backed up, then written with `If-Match`. The contact cache is emptied after every write.
+- Duplicate check when creating: same email address (case-insensitive), same phone number (digits, last 8), same full name (accent- and case-insensitive).
+- No writing of group cards and no `DELETE` on CardDAV; `test/permissions.test.ts` guards both.
 
 ## Mail (IMAP), results of the feasibility test
 

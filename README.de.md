@@ -13,7 +13,7 @@ Die Oberfläche der Erweiterung ist auf Englisch: Werkzeugtitel, Beschreibungen,
 - **Sendet nie.** Mails werden nur als Entwurf im Ordner »Entwürfe« angelegt. Du prüfst und sendest sie selbst in Apple Mail.
 - **Löscht Mails nie endgültig.** `trash_message` verschiebt sie in den Papierkorb, dort sind sie etwa 30 Tage wiederherstellbar.
 - **Löscht nur eigene Termine und nur mit Sicherung.** `delete_event` legt vorher eine `.ics`-Sicherung an und liefert den Termin vollständig zurück.
-- **Schreibt in geteilte Kalender nur auf ausdrückliche Nennung.** Kontakte werden nur gelesen. Einladungen und Teilnehmer gibt es nicht.
+- **Schreibt in geteilte Kalender nur auf ausdrückliche Nennung.** Kontakte werden nur auf Anfrage angelegt oder geändert (`update_contact` sichert die Karte vorher) und nie gelöscht. Einladungen und Teilnehmer gibt es nicht.
 
 <details>
 <summary>Inhalt</summary>
@@ -69,7 +69,7 @@ Hinweise:
    | Default calendar for new events | Name eines **privaten Termin-Kalenders**, zum Beispiel `Termine`. Keine Erinnerungsliste und kein geteilter Kalender. Leer lassen geht auch, dann muss jeder neue Termin einen Kalender nennen. |
 
 4. Die Erweiterung einschalten.
-5. **Die Löschwerkzeuge auf »Nachfragen« stellen:** unter *Einstellungen → Erweiterungen* (je nach Version *Anpassen → Konnektoren*) bei **iClaude** die Werkzeuge `delete_event` und `trash_message`. Dann fragt Claude vor jedem Löschen nach und zeigt Titel und Startzeit bzw. Betreff und Absender.
+5. **Die Löschwerkzeuge und `update_contact` auf »Nachfragen« stellen:** unter *Einstellungen → Erweiterungen* (je nach Version *Anpassen → Konnektoren*) bei **iClaude** die Werkzeuge `delete_event`, `trash_message` und `update_contact`. Dann fragt Claude vor jedem Löschen oder Ändern eines Kontakts nach und zeigt Titel und Startzeit, Betreff und Absender bzw. den Namen des Kontakts.
 6. Testen, zum Beispiel mit »Welche Kalender siehst du?« und »Was steht diese Woche an?«. Geteilte Kalender sind in der Antwort als geteilt markiert.
 
 ## Werkzeuge
@@ -79,7 +79,9 @@ Hinweise:
 | `list_calendars`, `list_events`, `search_events`, `find_free_slots` | Kalender lesen | nur lesen |
 | `create_event`, `update_event` | Termine anlegen und ändern | schreiben; geteilte Kalender nur mit `shared_calendar`; keine Teilnehmer |
 | **`delete_event`** | eigenen Termin löschen | **löschen** (siehe unten) |
-| `search_contacts`, `get_contact` | Kontakte lesen | nur lesen |
+| `search_contacts`, `get_contact`, `list_contact_groups`, `upcoming_contact_dates` | Kontakte, Gruppen und anstehende Geburtstage und Jahrestage lesen | nur lesen |
+| `create_contact` | einen Kontakt anlegen (prüft vorher auf Dubletten) | schreiben; ändert nie vorhandene Kontakte |
+| **`update_contact`** | einen Kontakt ändern | **schreiben**, vorher `.vcf`-Sicherung (siehe unten) |
 | `list_mailboxes`, `unread_counts`, `list_recent`, `search_messages`, `get_message`, `get_thread` | Mail lesen, nichts wird als gelesen markiert | nur lesen |
 | `create_draft` | Entwurf oder Antwort-Entwurf anlegen | schreiben, nur im Ordner »Entwürfe« |
 | **`trash_message`** | Mails in den Papierkorb verschieben | **verschieben** (siehe unten) |
@@ -102,6 +104,15 @@ Abgelehnt werden:
 1. Das Ergebnis enthält den Termin vollständig (Titel, Start, Ende, ganztägig, Ort, Notiz, Erinnerungen, Wiederholungsregel, Kalender). Claude kann ihn damit per `create_event` neu anlegen.
    Was sich so nicht abbilden lässt, etwa Ausnahmen einer Serie, steht unter `restoreHints`.
 2. Vorher wird der Termin als `.ics` gesichert (siehe [Sicherungen](#sicherungen-gelöschter-termine)). Schlägt die Sicherung fehl, wird nicht gelöscht.
+
+### `update_contact`: Kontakt ändern
+
+Pflicht: `id` und `name` des Kontakts (wird gegen den gespeicherten Kontakt geprüft; passt er nicht, wird nichts geändert), optional das `etag` aus `get_contact`. Einfache Felder lassen sich setzen (Vor- und Nachname, Firma, Abteilung, Position, Spitzname, Geburtstag, Notizen; ein leerer Text entfernt das Feld). E-Mail-Adressen, Telefonnummern, Adressen und Webadressen lassen sich hinzufügen oder per exaktem Wert entfernen. Das Ergebnis zeigt Vorher und Nachher jedes geänderten Felds.
+
+- Foto, Gruppenzugehörigkeit, UID und alle Felder, die nicht genannt werden, bleiben unverändert: Die Karte wird zeilenweise bearbeitet und nie neu serialisiert.
+- Vor dem Schreiben wird die Karte als `.vcf` in `~/Library/Application Support/icloud-mcp/contacts-backup/` gesichert (90 Tage, höchstens 200 Dateien, nur für dich lesbar). Scheitert die Sicherung, wird nichts geändert. Zum Wiederherstellen die `.vcf` in Apple Kontakte importieren.
+- Geschrieben wird mit `If-Match` auf das ETag. Kontakte und Gruppen werden nie gelöscht, Gruppenkarten nie beschrieben.
+- `create_contact` legt keinen Kontakt an, wenn es schon einen mit gleicher E-Mail-Adresse, Telefonnummer (letzte 8 Ziffern) oder gleichem vollständigen Namen gibt, und liefert stattdessen die Treffer (außer bei `allow_duplicate: true`).
 
 ### `trash_message`: Mails in den Papierkorb
 

@@ -22,7 +22,8 @@ npm run imap-capabilities   # iCloud Mail capabilities after sign-in and folder 
 manifest.json            Desktop Extension manifest (0.3), user_config, tool list
 src/core/                domain logic, knows nothing about MCP (reusable for a later hosted connector)
   calendar/ contacts/ mail/   access (tsdav / imapflow), processing and service for each
-  permissions.ts         central permission checks (WriteGrant for create/update/delete, DraftGrant, TrashGrant)
+  permissions.ts         central permission checks (WriteGrant for create/update/delete, DraftGrant, TrashGrant, ContactWriteGrant)
+  contacts/vcardEdit.ts  line-level vCard editing (create and change contact cards without re-serializing)
   calendar/backup.ts     .ics backup before deletion, cleanup (90 days / 200 files)
   mail/trash.ts          trash_message: checks subject and sender, then moves
   untrusted.ts           delimiting untrusted content, structuredContent
@@ -38,7 +39,8 @@ These rules are the core of the project. They are enforced in code, not just in 
 
 - **Permissions in code:** write methods require a grant from `src/core/permissions.ts`. Tool annotations (`readOnlyHint`, `destructiveHint`) must be accurate.
 - **Only two ways to delete:** `delete_event` (own event, `.ics` backup first; never with attendees, another organizer, in shared calendars or as a single occurrence) and `trash_message` (IMAP `UID MOVE` into the folder with the `\Trash` flag, at most 20, subject and sender are checked; never `\Deleted`, never `EXPUNGE`). A guard test in `test/permissions.test.ts` enforces this in the source code.
-- **No sending:** no SMTP in the code, no flagging of mails, contacts read-only.
+- **No sending:** no SMTP in the code, no flagging of mails.
+- **Contacts:** only single cards are created (`PUT` with `If-None-Match: *`) or changed (`PUT` with `If-Match`), always with a `ContactWriteGrant`. `update_contact` saves a `.vcf` backup first (`contacts-backup/`, same rules as the `.ics` backup). No `DELETE` on CardDAV, no tool to delete contacts or groups, group cards are never written (the grant refuses them). `ical.js` must not re-serialize a vCard (see ICLOUD-NOTES.md): edit on the line level.
 - **No invitations:** `create_event` and `update_event` set no attendees. Events with attendees or another organizer are not changed; for recurring series only the whole series.
 - **Shared calendars** (marked `shared: true` in `list_calendars`) only with an explicit `shared_calendar="<name>"`. Never run live tests in shared calendars.
 - **Reading mail without side effects:** open folders read-only (`EXAMINE`) and use `BODY.PEEK`. Drafts only via `APPEND` with `\Draft` into the Drafts folder.

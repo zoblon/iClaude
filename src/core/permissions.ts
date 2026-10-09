@@ -291,3 +291,43 @@ export function authorizeTrash(r: TrashRequest): TrashGrant {
   }
   return TrashGrant.issue(target.path, r.sourcePaths, n);
 }
+
+/* ------------------------------------------------------------------ */
+/* Contacts: creating and changing a single contact card               */
+/* ------------------------------------------------------------------ */
+
+export type ContactWriteOp = 'create' | 'update';
+
+const contactIssued = new WeakSet<ContactWriteGrant>();
+
+/**
+ * Permission to create one contact card or to change one existing contact card.
+ * There is no grant for deleting contacts or for touching groups: neither exists in the code.
+ */
+export class ContactWriteGrant {
+  private constructor(
+    readonly op: ContactWriteOp,
+    /** Path of the .vcf resource (for 'create': the file name that will be created). */
+    readonly target: string,
+  ) {}
+
+  static issue(op: ContactWriteOp, target: string): ContactWriteGrant {
+    const g = new ContactWriteGrant(op, target);
+    contactIssued.add(g);
+    return g;
+  }
+
+  static isValid(g: unknown, op: ContactWriteOp): g is ContactWriteGrant {
+    return g instanceof ContactWriteGrant && contactIssued.has(g) && g.op === op;
+  }
+}
+
+/** Contact cards only; group cards (address book server kind "group") are never written. */
+export function authorizeContactWrite(r: { op: ContactWriteOp; target: string; vcard: string }): ContactWriteGrant {
+  if (/^\s*(?:[\w-]+\.)?(?:X-ADDRESSBOOKSERVER-KIND|KIND)\s*[;:][^\r\n]*group/im.test(r.vcard.replace(/\r?\n[ \t]/g, ''))) {
+    throw new UserError('This entry is a contact group. Groups are never changed by this connector. Please change the group in Apple Contacts.');
+  }
+  if (r.op === 'create' && !/^[A-Za-z0-9-]{8,64}\.vcf$/.test(r.target)) throw new UserError('Internal error: invalid file name.');
+  if (r.op === 'update' && (!/^\/[^?#\s]*\.vcf$/i.test(r.target) || r.target.includes('..'))) throw new UserError('Invalid contact ID. Use the id from search_contacts unchanged.');
+  return ContactWriteGrant.issue(r.op, r.target);
+}

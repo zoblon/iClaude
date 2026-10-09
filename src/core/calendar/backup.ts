@@ -13,7 +13,12 @@ export const BACKUP_MAX_AGE_DAYS = 90;
 export const BACKUP_MAX_FILES = 200;
 
 /** Files this connector creates itself: "2026-10-08_191530_Title.ics". Nothing else in the folder is ever touched. */
-const OWN_FILE = /^\d{4}-\d{2}-\d{2}_\d{6}_.*\.ics$/;
+const ownFile = (ext: string) => new RegExp(`^\\d{4}-\\d{2}-\\d{2}_\\d{6}_.*\\.${ext}$`);
+
+/** Folder for backups of contacts before they are changed (readable only by the user). */
+export function defaultContactBackupDir(): string {
+  return join(homedir(), 'Library', 'Application Support', 'icloud-mcp', 'contacts-backup');
+}
 
 export interface BackupOptions {
   dir: string;
@@ -22,6 +27,12 @@ export interface BackupOptions {
   now?: () => number;
   maxAgeDays?: number;
   maxFiles?: number;
+  /** File extension without dot (default "ics"). */
+  ext?: string;
+  /** What is backed up, for error messages (default "event"). */
+  what?: string;
+  /** What did not happen when the backup fails (default "The event was NOT deleted."). */
+  failure?: string;
 }
 
 export interface SavedBackup {
@@ -63,15 +74,18 @@ export class BackupStore {
 
   /** Writes the backup and reads it back to verify. Any error aborts (the event is then not deleted). */
   async save(title: string, ics: string): Promise<SavedBackup> {
+    const ext = this.o.ext ?? 'ics';
     const fail = () =>
-      new UserError('Could not create a backup of the event. The event was NOT deleted. Please check that the folder ~/Library/Application Support/icloud-mcp is writable.');
+      new UserError(
+        `Could not create a backup of the ${this.o.what ?? 'event'}. ${this.o.failure ?? 'The event was NOT deleted.'} Please check that the folder ~/Library/Application Support/icloud-mcp is writable.`,
+      );
     try {
       await mkdir(this.o.dir, { recursive: true, mode: 0o700 });
       await chmod(this.o.dir, 0o700);
       const stamp = DateTime.fromMillis(this.now(), { zone: this.o.zone }).toFormat('yyyy-MM-dd_HHmmss');
       const base = `${stamp}_${fileSlug(title)}`;
       for (let n = 1; n <= 50; n++) {
-        const file = `${base}${n === 1 ? '' : `-${n}`}.ics`;
+        const file = `${base}${n === 1 ? '' : `-${n}`}.${ext}`;
         const path = join(this.o.dir, file);
         try {
           await writeFile(path, ics, { flag: 'wx', mode: 0o600, encoding: 'utf8' });
@@ -106,7 +120,7 @@ export class BackupStore {
   /** Removes backups older than the maximum age and keeps at most the newest maxFiles of the rest. */
   async prune(): Promise<number> {
     try {
-      const names = (await readdir(this.o.dir)).filter((f) => OWN_FILE.test(f));
+      const names = (await readdir(this.o.dir)).filter((f) => ownFile(this.o.ext ?? 'ics').test(f));
       const files = await Promise.all(
         names.map(async (f) => {
           const p = join(this.o.dir, f);

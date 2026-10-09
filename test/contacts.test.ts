@@ -17,7 +17,8 @@ describe('parseVCard', () => {
     ])!;
     expect(c).toMatchObject({
       name: 'Dr. Max Paul Muster jun.',
-      organization: 'Beispiel GmbH, Sales',
+      organization: 'Beispiel GmbH',
+      department: 'Sales',
       jobTitle: 'Head',
       birthday: '1980-05-17',
       notes: 'Line 1\nLine 2',
@@ -63,7 +64,7 @@ const fixtures: Contact[] = [
   parse(['N:Schmidt;Anna;;;', 'FN:Anna Schmidt', 'NICKNAME:Annie', 'ORG:Beispiel GmbH', 'EMAIL:a.schmidt@web.de'], '/u/card/3.vcf')!,
   parse(['N:Groß;Karl;;;', 'FN:Karl Groß'], '/u/card/4.vcf')!,
 ];
-const svc = new ContactService({ loadAll: async () => ({ contacts: fixtures, truncated: false }) });
+const svc = new ContactService({ loadAll: async () => ({ contacts: fixtures, groups: [], truncated: false }) });
 const names = async (q: string) => (await svc.search(q)).contacts.map((c) => c.name);
 
 describe('ContactService.search', () => {
@@ -91,7 +92,7 @@ describe('ContactService.search', () => {
     expect(r.cut).toBe(true);
   });
   it('rejects empty searches', async () => {
-    await expect(svc.search('   ')).rejects.toThrow(/empty/);
+    await expect(svc.search('   ')).rejects.toThrow(/search term/);
   });
 });
 

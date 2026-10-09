@@ -11,7 +11,7 @@ A local MCP server (packaged as a Desktop Extension) for iCloud Calendar, Contac
 - **Never sends.** Mails are only created as drafts in the Drafts folder. You review and send them yourself in Apple Mail.
 - **Never deletes mails permanently.** `trash_message` moves them to the Trash, where they can be recovered for about 30 days.
 - **Deletes only your own events, and only with a backup.** `delete_event` first saves an `.ics` backup and returns the full event.
-- **Writes to shared calendars only when you name them explicitly.** Contacts are read-only. Invitations and attendees are not supported.
+- **Writes to shared calendars only when you name them explicitly.** Contacts are only created or changed on request (`update_contact` backs the card up first) and are never deleted. Invitations and attendees are not supported.
 
 <details>
 <summary>Contents</summary>
@@ -67,7 +67,7 @@ Notes:
    | Default calendar for new events | Name of a **private event calendar**, for example `Home`. Not a reminders list and not a shared calendar. You can leave it empty; then every new event has to name a calendar. |
 
 4. Enable the extension.
-5. **Set the delete tools to require approval:** in *Settings > Extensions* (depending on the version *Customize > Connectors*), under **iClaude**, for the tools `delete_event` and `trash_message`. Claude then asks before every deletion and shows the title and start time, or the subject and sender.
+5. **Set the delete tools and `update_contact` to require approval:** in *Settings > Extensions* (depending on the version *Customize > Connectors*), under **iClaude**, for the tools `delete_event`, `trash_message` and `update_contact`. Claude then asks before every deletion or contact change and shows the title and start time, the subject and sender, or the contact's name.
 6. Try it, for example with "Which calendars can you see?" and "What's on this week?". Shared calendars are marked as shared in the answer.
 
 The extension's interface (tool titles, descriptions, error messages) is in English. Claude still answers in your language.
@@ -79,7 +79,9 @@ The extension's interface (tool titles, descriptions, error messages) is in Engl
 | `list_calendars`, `list_events`, `search_events`, `find_free_slots` | Read calendars | read-only |
 | `create_event`, `update_event` | Create and change events | write; shared calendars only with `shared_calendar`; no attendees |
 | **`delete_event`** | Delete one of your own events | **delete** (see below) |
-| `search_contacts`, `get_contact` | Read contacts | read-only |
+| `search_contacts`, `get_contact`, `list_contact_groups`, `upcoming_contact_dates` | Read contacts, groups, upcoming birthdays and anniversaries | read-only |
+| `create_contact` | Create one contact (checks for duplicates first) | write; never changes existing contacts |
+| **`update_contact`** | Change one contact | **write**, `.vcf` backup first (see below) |
 | `list_mailboxes`, `unread_counts`, `list_recent`, `search_messages`, `get_message`, `get_thread` | Read mail; nothing is marked as read | read-only |
 | `create_draft` | Create a draft or a reply draft | write, only in the Drafts folder |
 | **`trash_message`** | Move mails to the Trash | **move** (see below) |
@@ -102,6 +104,15 @@ Refused:
 1. The result contains the full event (title, start, end, all-day, location, notes, alerts, recurrence rule, calendar). Claude can use it to recreate the event with `create_event`.
    Anything that can't be represented that way, such as exceptions in a series, is listed under `restoreHints`.
 2. Before deleting, the event is saved as an `.ics` file (see [Backups](#backups-of-deleted-events)). If the backup fails, nothing is deleted.
+
+### `update_contact`: change a contact
+
+Required: the contact's `id` and `name` (checked against the stored contact; if it doesn't match, nothing is changed), optionally the `etag` from `get_contact`. You can set simple fields (first and last name, company, department, job title, nickname, birthday, notes; an empty string removes the field) and add or remove emails, phone numbers, addresses and web addresses (removal by exact value). The result shows before and after of every changed field.
+
+- The photo, group memberships, the UID and every field that isn't named stay exactly as they were: the card is edited line by line and is never re-serialized.
+- Before writing, the card is saved as a `.vcf` file in `~/Library/Application Support/icloud-mcp/contacts-backup/` (90 days, at most 200 files, readable only by you). If the backup fails, nothing is changed. To restore, import the `.vcf` in Apple Contacts.
+- Writing uses `If-Match` on the ETag. Contacts and groups are never deleted, and group cards are never written.
+- `create_contact` refuses to create a contact when one with the same email address, phone number (last 8 digits) or full name exists, and returns the matches instead (unless `allow_duplicate` is true).
 
 ### `trash_message`: move mails to the Trash
 

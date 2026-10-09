@@ -288,7 +288,7 @@ describe('Deleting, sending and moving in the code: only the two allowed paths',
 
   it('forbidden functions appear nowhere in the code (no sending, no deleting contacts, no flags, no EXPUNGE, no COPY fallback)', () => {
     const forbidden = [
-      /deleteCalendarObject/, /deleteVCard/, /createVCard/, /updateVCard/,
+      /deleteCalendarObject/, /deleteVCard/, /\bcreateVCard\b/, /\bupdateVCard\b/,
       /createTransport/, /sendMail/, /from 'nodemailer'/, /smtp/i,
       /messageDelete/, /messageCopy/, /messageFlags(Add|Remove|Set)/, /\.setFlagColor/, /mailboxDelete/, /mailboxRename/, /\.expunge/i, /\bEXPUNGE\b/,
     ];
@@ -338,6 +338,33 @@ describe('Deleting, sending and moving in the code: only the two allowed paths',
     const types = readFileSync('src/core/calendar/types.ts', 'utf8');
     const hits = [...strip(types).matchAll(/\b\w*(delete|remove)\w*\b/gi)].map((m) => m[0]);
     expect(hits).toEqual(['deleteObject']);
+  });
+
+  it('contacts: no DELETE on CardDAV, no tool or function to delete contacts or groups, no writes to group cards', () => {
+    const carddav = code.find((x) => x.f === 'src/core/contacts/carddav.ts')!.code;
+    expect(carddav).not.toMatch(/DELETE/);
+    expect([...carddav.matchAll(/method:\s*'([A-Z]+)'|method:\s*init\.method/g)].length).toBeGreaterThan(0);
+    expect(carddav).toMatch(/method: 'GET' \| 'PUT'/); // the only methods the contact sender accepts
+    for (const { f, code: c } of code) {
+      if (!f.includes('/contacts/') && f !== 'src/mcp/contactTools.ts') continue;
+      expect(c, `${f}: delete`).not.toMatch(/deleteCard|deleteContact|removeContact|deleteGroup|\.delete\(|DELETE/);
+    }
+    // Writing goes through the grant; group cards are refused by the grant itself.
+    const body = carddav.slice(carddav.indexOf('async createCard'));
+    expect(body.indexOf("ContactWriteGrant.isValid(grant, 'create')")).toBeLessThan(body.indexOf("method: 'PUT'"));
+    expect(body.indexOf("ContactWriteGrant.isValid(grant, 'update')")).toBeLessThan(body.lastIndexOf("method: 'PUT'"));
+    const tools = src.find((x) => x.f === 'src/mcp/contactTools.ts')!.text;
+    expect([...tools.matchAll(/registerTool\(\s*'([^']+)'/g)].map((m) => m[1])).toEqual([
+      'search_contacts', 'get_contact', 'list_contact_groups', 'upcoming_contact_dates', 'create_contact', 'update_contact',
+    ]);
+  });
+
+  it('contact tool annotations are accurate', () => {
+    const tools = src.find((x) => x.f === 'src/mcp/contactTools.ts')!.text;
+    const annot = (name: string) => tools.slice(tools.indexOf(`'${name}'`)).match(/annotations:\s*(READ_ONLY|\{[^}]*\})/)![1]!;
+    for (const n of ['search_contacts', 'get_contact', 'list_contact_groups', 'upcoming_contact_dates']) expect(annot(n), n).toBe('READ_ONLY');
+    expect(annot('create_contact')).toMatch(/readOnlyHint: false, destructiveHint: false/);
+    expect(annot('update_contact')).toMatch(/readOnlyHint: false, destructiveHint: true/);
   });
 
   it('the mail read interface still has no mutating method', () => {
