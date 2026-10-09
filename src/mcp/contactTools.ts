@@ -10,11 +10,11 @@ export function registerContactTools(server: McpServer, contacts: ContactService
   server.registerTool(
     'search_contacts',
     {
-      title: 'Kontakte suchen',
+      title: 'Search contacts',
       description:
         'Searches the iCloud contacts by name, nickname, company, email address or phone number (case- and accent-insensitive; every word of the query must match). Returns a compact list; use get_contact with the id for full details. Read-only.',
       inputSchema: z.object({
-        query: z.string().min(1).max(100).describe('Suchbegriff(e), z. B. "Müller", "beispiel.de" oder "Anna Firma".'),
+        query: z.string().min(1).max(100).describe('Search term(s), e.g. "Müller", "example.com" or "Anna Acme".'),
         limit: z.number().int().min(1).max(50).default(20),
       }),
       outputSchema: dataOutputSchema,
@@ -24,12 +24,12 @@ export function registerContactTools(server: McpServer, contacts: ContactService
       guarded('search_contacts', async () => {
         const r = await contacts.search(a.query, a.limit);
         return dataResult({
-          summary: `${r.total} Kontakte gefunden${r.cut ? `, die ersten ${r.contacts.length} werden angezeigt` : ''}.`,
-          source: 'den iCloud-Kontakten',
+          summary: `${r.total} contacts found${r.cut ? `, showing the first ${r.contacts.length}` : ''}.`,
+          source: 'the iCloud contacts',
           data: r.contacts,
           notes: [
-            ...(r.cut ? ['Ergebnis gekürzt. Suche eingrenzen.'] : []),
-            ...(r.truncated ? ['Das Adressbuch ist sehr groß; nicht alle Kontakte wurden geladen.'] : []),
+            ...(r.cut ? ['Result truncated. Narrow the search.'] : []),
+            ...(r.truncated ? ['The address book is very large; not all contacts were loaded.'] : []),
           ],
         });
       }),
@@ -38,17 +38,17 @@ export function registerContactTools(server: McpServer, contacts: ContactService
   server.registerTool(
     'get_contact',
     {
-      title: 'Kontakt abrufen',
+      title: 'Get contact',
       description:
         'Returns the full details of one contact (all emails, phones, addresses, birthday, notes; no photo). Use the id from search_contacts. Read-only.',
-      inputSchema: z.object({ id: z.string().min(5).max(500).describe('ID aus search_contacts, unverändert.') }),
+      inputSchema: z.object({ id: z.string().min(5).max(500).describe('ID from search_contacts, unchanged.') }),
       outputSchema: dataOutputSchema,
       annotations: READ_ONLY,
     },
     async (a) =>
       guarded('get_contact', async () => {
         const c = await contacts.get(a.id);
-        return dataResult({ summary: 'Kontakt gefunden.', source: 'den iCloud-Kontakten', data: c });
+        return dataResult({ summary: 'Contact found.', source: 'the iCloud contacts', data: c });
       }),
   );
 }

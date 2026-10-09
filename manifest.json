@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "icloud-connector",
   "display_name": "iClaude",
-  "version": "0.2.2",
-  "description": "Lokaler Zugriff auf deine iCloud-Kalender, -Kontakte und -Mails. Sendet nie. Mails nur in den Papierkorb (nie endgültig löschen), eigene Termine nur mit Sicherung.",
-  "long_description": "Dieser Konnektor läuft ausschließlich auf deinem Mac (kein Server im Internet) und verbindet Claude mit iCloud.\n\nKalender: Termine lesen, suchen, freie Zeiten finden, Termine anlegen und ändern. Einladungen und Teilnehmer gibt es nicht. In geteilten Kalendern wird nur geschrieben, wenn du den Kalender ausdrücklich nennst. Löschen: Das Werkzeug »Termin löschen« löscht nur eigene Termine, einzeln und ganze Serien. Vorher sichert es den Termin als .ics-Datei in ~/Library/Application Support/icloud-mcp/deleted/ (90 Tage, höchstens 200 Dateien; Doppelklick stellt ihn in Apple Kalender wieder her) und liefert ihn vollständig zurück. Termine mit Teilnehmern, von anderen organisierte Termine, Termine in geteilten Kalendern und einzelne Vorkommen einer Serie werden nie gelöscht. iCloud selbst kann einzelne gelöschte Termine nicht wiederherstellen.\n\nKontakte: suchen und lesen (nur lesend).\n\nMail: Ordner, Posteingang und Suche, Nachrichten und Konversationen lesen (ohne etwas als gelesen zu markieren), Antworten und Entwürfe vorbereiten. Entwürfe landen im Ordner Entwürfe, du prüfst und sendest sie selbst in Apple Mail. Das Werkzeug »Mails in den Papierkorb verschieben« verschiebt höchstens 20 Mails je Aufruf in den Papierkorb, nach Prüfung von Betreff und Absender. Endgültig gelöscht wird nie; im Papierkorb sind die Mails etwa 30 Tage wiederherstellbar. Senden und Markieren gibt es nicht.\n\nEmpfehlung: Stelle die beiden Löschwerkzeuge in Claude Desktop (Einstellungen > Erweiterungen) auf »Nachfragen«. Geplante Aufgaben können sie dann nicht ausführen.\n\nDein App-spezifisches Passwort wird im macOS-Schlüsselbund gespeichert.",
+  "version": "0.2.3",
+  "description": "Local access to your iCloud calendars, contacts and mail. Never sends anything. Messages only go to the Trash (never deleted permanently), your own events are deleted only after a backup.",
+  "long_description": "This connector runs entirely on your Mac (no server on the internet) and connects Claude to iCloud.\n\nCalendar: read and search events, find free slots, create and change events. There are no invitations or attendees. Shared calendars are only written to when you name the calendar explicitly. Deleting: the delete_event tool deletes only your own events, single events and whole recurring series. Before deleting, it backs up the event as an .ics file in ~/Library/Application Support/icloud-mcp/deleted/ (90 days, at most 200 files; double-clicking the file restores it in Apple Calendar) and returns it in full. Events with attendees, events organized by others, events in shared calendars and single occurrences of a series are never deleted. iCloud itself cannot restore individual deleted events.\n\nContacts: search and read (read-only).\n\nMail: folders, inbox and search, read messages and conversations (without marking anything as read), prepare replies and drafts. Drafts are saved in the Drafts folder; you review and send them yourself in Apple Mail. The trash_message tool moves at most 20 messages per call to the Trash, after checking subject and sender. Nothing is ever deleted permanently; messages in the Trash can be restored for about 30 days. There is no sending and no flagging.\n\nRecommendation: in Claude Desktop (Settings > Extensions), set the two deletion tools delete_event and trash_message to require approval. Claude then asks before every deletion, and scheduled tasks cannot run them on their own.\n\nYour app-specific password is stored in the macOS Keychain.",
   "author": {
     "name": "Tobi Rehkopf"
   },
@@ -16,11 +16,13 @@
   "license": "MIT",
   "keywords": [
     "icloud",
-    "kalender",
-    "kontakte",
     "mail",
     "calendar",
-    "contacts"
+    "contacts",
+    "mcp",
+    "caldav",
+    "imap",
+    "claude"
   ],
   "icon": "icon.png",
   "server": {
@@ -43,105 +45,105 @@
   "tools": [
     {
       "name": "list_calendars",
-      "description": "Kalender auflisten (mit Kennzeichnung geteilter Kalender)"
+      "description": "List calendars (shared calendars are marked)"
     },
     {
       "name": "list_events",
-      "description": "Termine in einem Zeitraum auflisten"
+      "description": "List events in a time range"
     },
     {
       "name": "search_events",
-      "description": "Termine suchen"
+      "description": "Search events"
     },
     {
       "name": "find_free_slots",
-      "description": "Freie Zeiten finden"
+      "description": "Find free slots"
     },
     {
       "name": "create_event",
-      "description": "Termin anlegen (ohne Einladungen)"
+      "description": "Create an event (no invitations)"
     },
     {
       "name": "update_event",
-      "description": "Termin ändern (nur eigene, ohne Teilnehmer)"
+      "description": "Change an event (own events only, no attendees)"
     },
     {
       "name": "delete_event",
-      "description": "Eigenen Termin löschen (vorher als .ics gesichert; nie mit Teilnehmern oder in geteilten Kalendern)"
+      "description": "Delete one of your own events (backed up as .ics first; never with attendees or in shared calendars)"
     },
     {
       "name": "search_contacts",
-      "description": "Kontakte suchen"
+      "description": "Search contacts"
     },
     {
       "name": "get_contact",
-      "description": "Einen Kontakt abrufen"
+      "description": "Get one contact"
     },
     {
       "name": "list_mailboxes",
-      "description": "Mailordner auflisten"
+      "description": "List mail folders"
     },
     {
       "name": "unread_counts",
-      "description": "Ungelesene Mails zählen"
+      "description": "Count unread messages"
     },
     {
       "name": "list_recent",
-      "description": "Neueste Mails eines Ordners"
+      "description": "Latest messages in a folder"
     },
     {
       "name": "search_messages",
-      "description": "Mails suchen"
+      "description": "Search messages"
     },
     {
       "name": "get_message",
-      "description": "Eine Mail lesen (seitenweise, ohne sie als gelesen zu markieren)"
+      "description": "Read a message (paged, without marking it as read)"
     },
     {
       "name": "get_thread",
-      "description": "Eine Konversation lesen"
+      "description": "Read a conversation"
     },
     {
       "name": "create_draft",
-      "description": "Mail-Entwurf oder Antwort-Entwurf anlegen (wird nie gesendet)"
+      "description": "Create a draft or reply draft (never sent)"
     },
     {
       "name": "trash_message",
-      "description": "Mails in den Papierkorb verschieben (höchstens 20, nie endgültig löschen)"
+      "description": "Move messages to the Trash (at most 20, never deleted permanently)"
     }
   ],
   "tools_generated": false,
   "user_config": {
     "apple_id": {
       "type": "string",
-      "title": "Apple-ID (Mailadresse)",
-      "description": "Die Mailadresse deiner Apple-ID. Sie dient als Benutzername für Kalender und Kontakte.",
+      "title": "Apple ID (email address)",
+      "description": "The email address of your Apple ID. It is the username for Calendar and Contacts.",
       "required": true
     },
     "mail_user": {
       "type": "string",
-      "title": "iCloud-Mailadresse",
-      "description": "Deine @icloud.com-Adresse, der Benutzername für Mail. Sie kann von der Apple-ID abweichen.",
+      "title": "iCloud email address",
+      "description": "Your @icloud.com address, the username for Mail. It can differ from your Apple ID.",
       "required": true
     },
     "app_password": {
       "type": "string",
-      "title": "App-spezifisches Passwort",
-      "description": "Erzeugt unter account.apple.com > Anmeldung und Sicherheit > App-spezifische Passwörter. Nicht dein normales Apple-ID-Passwort.",
+      "title": "App-specific password",
+      "description": "Create one at account.apple.com > Sign-In and Security > App-Specific Passwords. Not your regular Apple ID password.",
       "sensitive": true,
       "required": true
     },
     "timezone": {
       "type": "string",
-      "title": "Zeitzone",
-      "description": "Zeitzone für Termine, z. B. Europe/Berlin.",
+      "title": "Time zone",
+      "description": "Time zone for events, e.g. Europe/Berlin.",
       "default": "Europe/Berlin",
       "required": false
     },
     "default_calendar": {
       "type": "string",
-      "title": "Standardkalender für neue Termine",
-      "description": "Name eines privaten, nicht geteilten Kalenders, in den neue Termine ohne weitere Angabe kommen. Ohne Angabe werden Termine nur angelegt, wenn ein Kalender genannt wird.",
+      "title": "Default calendar for new events",
+      "description": "Name of a private, non-shared calendar that new events go to when no calendar is given. If empty, events are only created when a calendar is named.",
       "required": false
     }
   },

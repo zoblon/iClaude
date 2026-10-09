@@ -1,10 +1,10 @@
 /**
- * Baut die Desktop Extension (.mcpb):
- *  1. Bündelt den Server zu einer einzigen Datei (kein node_modules in der Erweiterung nötig).
- *  2. Legt Manifest und Symbol daneben, gleicht die Version mit package.json ab.
- *  3. Prüft das Manifest und packt es mit dem offiziellen Werkzeug (mcpb).
- *  4. Prüft das Paket (nur erwartete Dateien, keine Zugangsdaten).
- * Aufruf: npm run build:mcpb
+ * Builds the Desktop Extension (.mcpb):
+ *  1. Bundles the server into a single file (no node_modules needed in the extension).
+ *  2. Places the manifest and icon next to it and syncs the version with package.json.
+ *  3. Validates the manifest and packs it with the official tool (mcpb).
+ *  4. Checks the package (only expected files, no credentials).
+ * Usage: npm run build:mcpb
  */
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
@@ -23,7 +23,7 @@ rmSync(stage, { recursive: true, force: true });
 mkdirSync(join(stage, 'server'), { recursive: true });
 mkdirSync(dist, { recursive: true });
 
-// 1) Bündeln
+// 1) Bundle
 await build({
   entryPoints: [join(root, 'src', 'stdio.ts')],
   outfile: join(stage, 'server', 'index.mjs'),
@@ -31,7 +31,7 @@ await build({
   platform: 'node',
   target: 'node20',
   format: 'esm',
-  // Einige Abhängigkeiten laden Node-Module per require(); im ESM-Bündel muss es require geben.
+  // Some dependencies load Node modules via require(); the ESM bundle has to provide require.
   banner: { js: "import { createRequire as __createRequire } from 'node:module';\nconst require = __createRequire(import.meta.url);" },
   legalComments: 'external',
   minify: false,
@@ -39,31 +39,31 @@ await build({
   logLevel: 'warning',
 });
 
-// 2) Manifest (Version aus package.json) und Symbol
+// 2) Manifest (version from package.json) and icon
 manifest.version = pkg.version;
 writeFileSync(join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 cpSync(join(root, 'assets', 'icon.png'), join(stage, 'icon.png'));
 
-// 3) Prüfen und packen
+// 3) Validate and pack
 execFileSync(bin('mcpb'), ['validate', join(stage, 'manifest.json')], { stdio: 'inherit' });
 const out = join(dist, `icloud-mcp-${pkg.version}.mcpb`);
 rmSync(out, { force: true });
 execFileSync(bin('mcpb'), ['pack', stage, out], { stdio: 'inherit' });
 
-// 4) Paket prüfen: nur erwartete Dateien
+// 4) Check the package: only expected files
 const listing = execFileSync('unzip', ['-Z1', out], { encoding: 'utf8' }).split('\n').filter(Boolean);
 const allowed = [/^manifest\.json$/, /^icon\.png$/, /^server\/index\.mjs(\.LEGAL\.txt)?$/];
 const unexpected = listing.filter((f) => !allowed.some((re) => re.test(f)));
 if (unexpected.length) {
-  console.error(`Unerwartete Dateien im Paket: ${unexpected.join(', ')}`);
+  console.error(`Unexpected files in the package: ${unexpected.join(', ')}`);
   process.exit(1);
 }
 if (/(^|\/)\.env/.test(listing.join('\n'))) {
-  console.error('Das Paket enthält eine .env-Datei.');
+  console.error('The package contains a .env file.');
   process.exit(1);
 }
 
-// Zugangsdaten dürfen nirgends im Paket stehen (Werte aus .env, falls vorhanden; es wird nichts ausgegeben).
+// Credentials must not appear anywhere in the package (values from .env, if present; nothing is printed).
 if (existsSync(join(root, '.env'))) {
   const secrets = readFileSync(join(root, '.env'), 'utf8')
     .split('\n')
@@ -71,11 +71,11 @@ if (existsSync(join(root, '.env'))) {
     .filter((v) => v && v.length >= 4);
   const unpacked = execFileSync('unzip', ['-p', out], { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 }).toString('utf8');
   if (secrets.some((s) => unpacked.includes(s))) {
-    console.error('Im Paket stehen Zugangsdaten aus .env. Abbruch.');
+    console.error('The package contains credentials from .env. Aborting.');
     rmSync(out, { force: true });
     process.exit(1);
   }
 }
 
 const kb = Math.round(statSync(out).size / 1024);
-console.log(`\nFertig: ${out.replace(root + '/', '')} (${kb} KB, ${listing.length} Dateien: ${listing.join(', ')})`);
+console.log(`\nDone: ${out.replace(root + '/', '')} (${kb} KB, ${listing.length} files: ${listing.join(', ')})`);

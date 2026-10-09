@@ -15,7 +15,7 @@ const files = (dir: string): string[] =>
   });
 
 describe('manifest.json', () => {
-  it('ist für das offizielle Werkzeug gültig (mcpb validate, wie beim Packen mit Symbol im selben Ordner)', () => {
+  it('is valid for the official tool (mcpb validate, as when packing with the icon in the same folder)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mcpb-validate-'));
     try {
       copyFileSync('manifest.json', join(dir, 'manifest.json'));
@@ -28,7 +28,7 @@ describe('manifest.json', () => {
     }
   });
 
-  it('nutzt Manifest 0.3 und läuft mit dem eingebauten Node von Claude Desktop', () => {
+  it('uses manifest 0.3 and runs with the Node built into Claude Desktop', () => {
     expect(manifest.manifest_version).toBe('0.3');
     expect(manifest.server.type).toBe('node');
     expect(manifest.server.mcp_config.command).toBe('node');
@@ -36,67 +36,67 @@ describe('manifest.json', () => {
     expect(manifest.server.mcp_config.args).toEqual(['${__dirname}/server/index.mjs']);
   });
 
-  it('das App-Passwort ist sensitiv (Schlüsselbund) und Pflicht, nichts Sensibles hat einen Vorgabewert', () => {
+  it('the app password is sensitive (Keychain) and required; nothing sensitive has a default value', () => {
     const c = manifest.user_config;
     expect(c.app_password).toMatchObject({ type: 'string', sensitive: true, required: true });
     expect(c.app_password.default).toBeUndefined();
     for (const [k, v] of Object.entries<Record<string, unknown>>(c)) {
-      if (v.default !== undefined) expect(k, 'nur unkritische Felder dürfen Vorgaben haben').toMatch(/^(timezone)$/);
+      if (v.default !== undefined) expect(k, 'only non-sensitive fields may have defaults').toMatch(/^(timezone)$/);
     }
   });
 
-  it('jede Einstellung aus user_config wird verwendet, und jede verwendete ist definiert', () => {
+  it('every user_config setting is used, and every used one is defined', () => {
     const used = new Set([...JSON.stringify(manifest.server.mcp_config).matchAll(/\$\{user_config\.([a-z_]+)\}/g)].map((m) => m[1]));
     expect([...used].sort()).toEqual(Object.keys(manifest.user_config).sort());
   });
 
-  it('die gesetzten Umgebungsvariablen sind genau die, die der Code liest', () => {
+  it('the environment variables set are exactly those the code reads', () => {
     const code = readFileSync(join('src', 'core', 'config.ts'), 'utf8');
     const read = new Set([...code.matchAll(/get\('(ICLOUD_[A-Z_]+)'\)/g)].map((m) => m[1]));
     expect(Object.keys(manifest.server.mcp_config.env).sort()).toEqual([...read].sort());
   });
 
-  it('die Werkzeugliste im Manifest entspricht den im Code registrierten Werkzeugen', () => {
+  it('the tool list in the manifest matches the tools registered in the code', () => {
     const registered = files('src').flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/registerTool\(\s*'([^']+)'/g)].map((m) => m[1]!));
     expect(manifest.tools.map((t: { name: string }) => t.name).sort()).toEqual([...registered].sort());
     expect(manifest.tools_generated).toBe(false);
     for (const t of manifest.tools) expect(t.description.length).toBeGreaterThan(5);
   });
 
-  it('hat Pflichtangaben, Symbol und eine plausible Laufzeitvorgabe', () => {
+  it('has required fields, an icon and a plausible runtime requirement', () => {
     for (const k of ['name', 'version', 'description', 'author', 'icon']) expect(manifest[k], k).toBeTruthy();
-    expect(manifest.compatibility.runtimes.node).toMatch(/>=\s*20/); // imapflow verlangt Node 20
+    expect(manifest.compatibility.runtimes.node).toMatch(/>=\s*20/); // imapflow requires Node 20
     expect(pkg.engines.node).toMatch(/>=\s*20/);
     expect(statSync(join('assets', 'icon.png')).size).toBeGreaterThan(1000);
   });
 
-  it('die Version im Manifest folgt package.json (das Build-Skript gleicht sie ab)', () => {
+  it('the manifest version follows package.json (the build script syncs it)', () => {
     expect(manifest.version).toBe(pkg.version);
   });
 
-  it('der MCP-Server meldet dieselbe Version wie package.json', () => {
+  it('the MCP server reports the same version as package.json', () => {
     const server = readFileSync(join('src', 'mcp', 'server.ts'), 'utf8');
     expect(/name: 'iClaude', version: '([^']+)'/.exec(server)?.[1]).toBe(pkg.version);
   });
 
-  it('die Beschreibung sagt genau, was gelöscht wird, und behauptet nicht mehr "löscht nie"', () => {
+  it('the description says exactly what is deleted and no longer claims "never deletes"', () => {
     const text = `${manifest.description}\n${manifest.long_description}`;
-    expect(text).not.toMatch(/Löscht und sendet nie/i);
-    expect(manifest.description).toMatch(/Sendet nie/);
-    expect(manifest.description).toMatch(/Papierkorb/);
-    expect(manifest.description).toMatch(/Sicherung/);
-    expect(manifest.long_description).toMatch(/Nachfragen/);
-    expect(manifest.long_description).toMatch(/nie endgültig|Endgültig gelöscht wird nie/);
-    expect(manifest.long_description).toMatch(/iCloud selbst kann einzelne gelöschte Termine nicht wiederherstellen/);
+    expect(text).not.toMatch(/never deletes/i);
+    expect(manifest.description).toMatch(/Never sends/);
+    expect(manifest.description).toMatch(/Trash/);
+    expect(manifest.description).toMatch(/backup/);
+    expect(manifest.long_description).toMatch(/require approval/);
+    expect(manifest.long_description).toMatch(/never deleted permanently|Nothing is ever deleted permanently/);
+    expect(manifest.long_description).toMatch(/iCloud itself cannot restore individual deleted events/);
   });
 
-  it('der Anzeigename ist iClaude, die Kennung der Erweiterung bleibt unverändert (sonst entstünde neben der installierten eine zweite Erweiterung ohne Einstellungen)', () => {
+  it('the display name is iClaude and the extension ID stays unchanged (otherwise a second extension without settings would appear next to the installed one)', () => {
     expect(manifest.display_name).toBe('iClaude');
     expect(manifest.name).toBe('icloud-connector');
     expect(manifest.author.name).toBe('Tobi Rehkopf');
   });
 
-  it('delete_event und trash_message stehen in der Werkzeugliste', () => {
+  it('delete_event and trash_message are in the tool list', () => {
     const names = manifest.tools.map((t: { name: string }) => t.name);
     expect(names).toEqual(expect.arrayContaining(['delete_event', 'trash_message']));
   });

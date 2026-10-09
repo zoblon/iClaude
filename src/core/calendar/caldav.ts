@@ -9,13 +9,13 @@ type DavClient = Awaited<ReturnType<typeof createDAVClient>>;
 
 const TIMEOUT_MS = 20_000;
 const CALENDAR_CACHE_MS = 5 * 60_000;
-/** Obergrenze je Kalender und Abfrage, schützt vor riesigen Antworten. */
+/** Upper limit per calendar and query; protects against huge responses. */
 const MAX_OBJECTS_PER_CALENDAR = 3000;
 
 /**
- * Eigenschaften, die für Anzeige, Suche und freie Zeiten gebraucht werden.
- * iCloud liefert bei allprop/allcomp keine Kalenderdaten (siehe docs/ICLOUD-NOTIZEN.md),
- * daher werden sie einzeln angefragt. Das ist zudem rund 70 % kleiner.
+ * Properties needed for display, search and free slots.
+ * iCloud returns no calendar data for allprop/allcomp (see docs/ICLOUD-NOTES.md),
+ * so they are requested individually. This is also about 70 % smaller.
  */
 const EVENT_PROPS = [
   'UID', 'SUMMARY', 'DTSTART', 'DTEND', 'DURATION', 'RRULE', 'RDATE', 'EXDATE', 'RECURRENCE-ID',
@@ -39,10 +39,10 @@ const queryProps = {
   },
 };
 
-/** CalDAV-Zeitformat YYYYMMDDTHHMMSSZ */
+/** CalDAV time format YYYYMMDDTHHMMSSZ */
 const caldavTime = (iso: string) => iso.replace(/[-:]/g, '').replace(/\.\d+/, '');
 
-/** Zeitzonennamen in der .ics, die weder IANA noch UTC sind (dafür fehlt die Definition in der eingeschränkten Antwort). */
+/** Time zone names in the .ics that are neither IANA nor UTC (their definition is missing from the restricted response). */
 export function hasUnknownTzid(ics: string): boolean {
   for (const m of ics.matchAll(/TZID[=:]([^:;\r\n]+)/gi)) {
     const id = m[1]!.trim();
@@ -60,8 +60,8 @@ const hrefOf = (v: unknown): string => {
 };
 
 /**
- * Erkennt anhand der Server-Eigenschaften, ob ein Kalender geteilt ist.
- * Im Zweifel gilt ein Kalender als geteilt (sicherer Standard).
+ * Detects from the server properties whether a calendar is shared.
+ * When in doubt, a calendar counts as shared (safe default).
  */
 export function classifyCalendar(
   props: Props,
@@ -73,17 +73,17 @@ export function classifyCalendar(
   const writable = /"(write|write-?content|bind|all)"/i.test(privs);
   const subscribed = 'subscribed' in rt || Boolean(props.source);
 
-  if ('sharedOwner' in rt || 'shared-owner' in rt) return { shared: true, reason: 'Eigentümer hat den Kalender geteilt', subscribed, writable };
-  if ('shared' in rt) return { shared: true, reason: 'Mit mir geteilter Kalender', subscribed, writable };
-  if (props.invite) return { shared: true, reason: 'Teilnehmerliste vorhanden', subscribed, writable };
-  if (props.sharedUrl) return { shared: true, reason: 'Freigabe-URL vorhanden', subscribed, writable };
+  if ('sharedOwner' in rt || 'shared-owner' in rt) return { shared: true, reason: 'owner has shared the calendar', subscribed, writable };
+  if ('shared' in rt) return { shared: true, reason: 'calendar shared with me', subscribed, writable };
+  if (props.invite) return { shared: true, reason: 'invite list present', subscribed, writable };
+  if (props.sharedUrl) return { shared: true, reason: 'sharing URL present', subscribed, writable };
   if (!owner || !ownPrincipal || owner !== ownPrincipal) {
-    return { shared: true, reason: 'Eigentümer nicht eindeutig der eigene Account', subscribed, writable };
+    return { shared: true, reason: 'owner is not clearly the own account', subscribed, writable };
   }
   return { shared: false, subscribed, writable };
 }
 
-/** Zugriff auf iCloud-CalDAV. Schreiben und Löschen nur mit passendem WriteGrant. */
+/** Access to iCloud CalDAV. Writing and deleting only with a matching WriteGrant. */
 export class CalDavGateway implements CalendarStore {
   private clientPromise?: Promise<DavClient>;
   private cache?: { at: number; calendars: CalendarInfo[]; raw: Map<string, DAVCalendar> };
@@ -100,7 +100,7 @@ export class CalDavGateway implements CalendarStore {
           defaultAccountType: 'caldav',
         }),
         TIMEOUT_MS,
-        'der Anmeldung bei iCloud-Kalender',
+        'signing in to iCloud Calendar',
       ).catch((e) => {
         this.clientPromise = undefined;
         throw e;
@@ -112,8 +112,8 @@ export class CalDavGateway implements CalendarStore {
   async listCalendars(force = false): Promise<CalendarInfo[]> {
     if (!force && this.cache && Date.now() - this.cache.at < CALENDAR_CACHE_MS) return this.cache.calendars;
     const client = await this.client();
-    const raw = await withTimeout(client.fetchCalendars(), TIMEOUT_MS, 'dem Laden der Kalender');
-    if (raw.length === 0) throw new UserError('Es wurden keine Kalender gefunden. Bitte in den iCloud-Einstellungen prüfen, ob Kalender aktiviert sind.');
+    const raw = await withTimeout(client.fetchCalendars(), TIMEOUT_MS, 'loading the calendars');
+    if (raw.length === 0) throw new UserError('No calendars found. Please check in the iCloud settings that Calendars is enabled.');
 
     const homeUrl = raw[0]!.url.replace(/[^/]+\/?$/, '');
     const responses = await withTimeout(
@@ -131,7 +131,7 @@ export class CalDavGateway implements CalendarStore {
         },
       }),
       TIMEOUT_MS,
-      'dem Laden der Kalendereigenschaften',
+      'loading the calendar properties',
     );
     const byPath = new Map<string, Props>();
     let ownPrincipal = '';
@@ -139,7 +139,7 @@ export class CalDavGateway implements CalendarStore {
       const path = new URL(r.href ?? '', homeUrl).pathname;
       const props = (r.props ?? {}) as Props;
       byPath.set(path, props);
-      // Die Kalender-Sammlung selbst gehört dem eigenen Account.
+      // The calendar home collection itself belongs to the own account.
       if (path === new URL(homeUrl).pathname) ownPrincipal = hrefOf(props.owner);
     }
 
@@ -165,8 +165,8 @@ export class CalDavGateway implements CalendarStore {
   }
 
   /**
-   * Holt die Termine im Zeitraum mit einzeln angefragten Eigenschaften (nicht die vollständige Datei!).
-   * Serien kommen als ganze Ressource zurück. Nicht zum Schreiben verwenden: dafür immer getObject (GET).
+   * Fetches the events in the range with individually requested properties (not the complete file!).
+   * Recurring series come back as a whole resource. Do not use for writing: always use getObject (GET) for that.
    */
   async fetchObjects(calendar: CalendarInfo, startIso: string, endIso: string): Promise<{ objects: RawObject[]; truncated: boolean }> {
     const results = await withTimeout(
@@ -186,7 +186,7 @@ export class CalDavGateway implements CalendarStore {
         headers: this.authHeaders(),
       }),
       TIMEOUT_MS,
-      `dem Laden der Termine aus "${calendar.name}"`,
+      `loading events from "${calendar.name}"`,
     );
     const list = results.filter((r) => r.ok !== false && r.href);
     const objects: RawObject[] = [];
@@ -198,14 +198,14 @@ export class CalDavGateway implements CalendarStore {
       const tag = typeof p.getetag === 'string' ? p.getetag : (p.getetag?._text ?? p.getetag?._cdata);
       const url = new URL(r.href!, calendar.url).href;
       let obj: RawObject = { url, ...(tag ? { etag: String(tag) } : {}), data };
-      // Unbekannte Zeitzonennamen: den Termin vollständig (mit Zeitzonendefinition) nachladen.
+      // Unknown time zone names: load the complete event (with time zone definition).
       if (hasUnknownTzid(data)) obj = (await this.getObject(calendar, url)) ?? obj;
       objects.push(obj);
     }
     return { objects, truncated: list.length > MAX_OBJECTS_PER_CALENDAR };
   }
 
-  /** Lädt den vollständigen Termin per GET (inklusive aller Eigenschaften, mit ETag aus der Antwort). */
+  /** Loads the complete event via GET (including all properties, with the ETag from the response). */
   async getObject(calendar: CalendarInfo, url: string): Promise<RawObject | undefined> {
     const target = resourceIn(calendar, url);
     const ctrl = new AbortController();
@@ -220,7 +220,7 @@ export class CalDavGateway implements CalendarStore {
       return { url: target.href, ...(etag ? { etag } : {}), data };
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
-        throw new UserError(`Zeitüberschreitung beim Laden des Termins (${Math.round(TIMEOUT_MS / 1000)} s). Bitte später erneut versuchen.`);
+        throw new UserError(`Timeout while loading the event (${Math.round(TIMEOUT_MS / 1000)} s). Please try again later.`);
       }
       throw e;
     } finally {
@@ -233,41 +233,41 @@ export class CalDavGateway implements CalendarStore {
   }
 
   async createObject(grant: WriteGrant, filename: string, ics: string): Promise<RawObject> {
-    if (!WriteGrant.isValid(grant, 'create')) throw new Error('Schreibzugriff ohne Freigabe');
-    if (!/^[A-Za-z0-9-]{8,64}\.ics$/.test(filename)) throw new UserError('Interner Fehler: ungültiger Dateiname.');
+    if (!WriteGrant.isValid(grant, 'create')) throw new Error('Write access without grant');
+    if (!/^[A-Za-z0-9-]{8,64}\.ics$/.test(filename)) throw new UserError('Internal error: invalid file name.');
     const client = await this.client();
     const cal = await this.rawCalendar(grant.calendar);
-    // tsdav sendet "If-None-Match: *": ein vorhandener Termin wird nie überschrieben.
-    const res = await withTimeout(client.createCalendarObject({ calendar: cal, filename, iCalString: ics }), TIMEOUT_MS, 'dem Anlegen des Termins');
+    // tsdav sends "If-None-Match: *": an existing event is never overwritten.
+    const res = await withTimeout(client.createCalendarObject({ calendar: cal, filename, iCalString: ics }), TIMEOUT_MS, 'creating the event');
     if (!res.ok) throw writeError(res.status);
     const url = new URL(filename, ensureSlash(grant.calendar.url)).href;
     return (await this.getObject(grant.calendar, url)) ?? { url, data: ics };
   }
 
   async updateObject(grant: WriteGrant, obj: RawObject & { etag: string }): Promise<RawObject> {
-    if (!WriteGrant.isValid(grant, 'update')) throw new Error('Schreibzugriff ohne Freigabe');
-    if (!obj.etag) throw new UserError('Ohne ETag wird nicht geschrieben.');
-    // Nur Termine im freigegebenen Kalender
-    if (!obj.url.startsWith(ensureSlash(grant.calendar.url))) throw new UserError('Der Termin gehört nicht zum freigegebenen Kalender.');
+    if (!WriteGrant.isValid(grant, 'update')) throw new Error('Write access without grant');
+    if (!obj.etag) throw new UserError('Not writing without an ETag.');
+    // Only events in the granted calendar
+    if (!obj.url.startsWith(ensureSlash(grant.calendar.url))) throw new UserError('The event does not belong to the granted calendar.');
     const client = await this.client();
-    // tsdav sendet "If-Match: <etag>": hat sich der Termin inzwischen geändert, lehnt der Server ab (412).
+    // tsdav sends "If-Match: <etag>": if the event has changed in the meantime, the server refuses (412).
     const res = await withTimeout(
       client.updateCalendarObject({ calendarObject: { url: obj.url, data: obj.data, etag: obj.etag } }),
       TIMEOUT_MS,
-      'dem Speichern des Termins',
+      'saving the event',
     );
     if (!res.ok) throw writeError(res.status);
     return (await this.getObject(grant.calendar, obj.url)) ?? { url: obj.url, data: obj.data };
   }
 
   /**
-   * Löscht genau einen Termin (HTTP DELETE mit If-Match auf den ETag). Hat sich der Termin inzwischen geändert, lehnt der Server mit 412 ab.
-   * Nur mit einer Freigabe aus authorizeDelete; geteilte Kalender werden hier nochmals ausgeschlossen.
+   * Deletes exactly one event (HTTP DELETE with If-Match on the ETag). If the event has changed in the meantime, the server refuses with 412.
+   * Only with a grant from authorizeDelete; shared calendars are excluded here once more.
    */
   async deleteObject(grant: WriteGrant, obj: { url: string; etag: string }): Promise<void> {
-    if (!WriteGrant.isValid(grant, 'delete')) throw new Error('Löschzugriff ohne Freigabe');
-    if (grant.calendar.shared) throw new UserError('Termine in geteilten Kalendern werden nie gelöscht.');
-    if (!obj.etag) throw new UserError('Ohne ETag wird nicht gelöscht.');
+    if (!WriteGrant.isValid(grant, 'delete')) throw new Error('Delete access without grant');
+    if (grant.calendar.shared) throw new UserError('Events in shared calendars are never deleted.');
+    if (!obj.etag) throw new UserError('Not deleting without an ETag.');
     const target = resourceIn(grant.calendar, obj.url);
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -276,7 +276,7 @@ export class CalDavGateway implements CalendarStore {
       if (!res.ok) throw deleteError(res.status);
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
-        throw new UserError(`Zeitüberschreitung beim Löschen des Termins (${Math.round(TIMEOUT_MS / 1000)} s). Bitte in Apple Kalender prüfen, ob der Termin noch da ist.`);
+        throw new UserError(`Timeout while deleting the event (${Math.round(TIMEOUT_MS / 1000)} s). Please check in Apple Calendar whether the event still exists.`);
       }
       throw e;
     } finally {
@@ -287,35 +287,35 @@ export class CalDavGateway implements CalendarStore {
   private async rawCalendar(calendar: CalendarInfo): Promise<DAVCalendar> {
     await this.listCalendars();
     const cal = this.cache?.raw.get(calendar.url);
-    if (!cal) throw new UserError(`Kalender "${calendar.name}" wurde nicht gefunden.`);
+    if (!cal) throw new UserError(`Calendar "${calendar.name}" was not found.`);
     return cal;
   }
 }
 
 const ensureSlash = (u: string) => (u.endsWith('/') ? u : `${u}/`);
 
-/** Zugangsdaten nur an den Kalender-Server und nur für Ressourcen dieses Kalenders senden. */
+/** Send credentials only to the calendar server and only for resources of this calendar. */
 function resourceIn(calendar: CalendarInfo, url: string): URL {
   const target = new URL(url);
   const base = new URL(ensureSlash(calendar.url));
   if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname) || target.pathname.includes('..')) {
-    throw new UserError('Ungültige Termin-ID: sie gehört nicht zu diesem Kalender. Die ID unverändert aus list_events übernehmen.');
+    throw new UserError('Invalid event ID: it does not belong to this calendar. Use the ID from list_events unchanged.');
   }
   return target;
 }
 
 function deleteError(status: number): UserError {
-  if (status === 412) return new UserError('Der Termin wurde inzwischen geändert. Es wurde nichts gelöscht. Bitte den Termin neu laden (list_events) und das Löschen erneut anfordern.');
-  if (status === 404) return new UserError('Der Termin wurde nicht gefunden (vielleicht schon gelöscht). Bitte mit list_events prüfen.');
-  if (status === 401) return new UserError('Anmeldung bei iCloud fehlgeschlagen. Apple-ID und App-spezifisches Passwort prüfen.');
-  if (status === 403) return new UserError('iCloud verweigert das Löschen in diesem Kalender. Bitte in Apple Kalender prüfen, ob du dort Schreibrechte hast.');
-  return new UserError(`iCloud hat das Löschen abgelehnt (HTTP ${status}). Der Termin ist vermutlich noch vorhanden; bitte in Apple Kalender prüfen.`);
+  if (status === 412) return new UserError('The event has changed in the meantime. Nothing was deleted. Please reload the event (list_events) and request the deletion again.');
+  if (status === 404) return new UserError('The event was not found (perhaps already deleted). Please check with list_events.');
+  if (status === 401) return new UserError('Sign-in to iCloud failed. Check the Apple ID and app-specific password.');
+  if (status === 403) return new UserError('iCloud refuses deletion in this calendar. Please check in Apple Calendar that you have write access there.');
+  return new UserError(`iCloud rejected the deletion (HTTP ${status}). The event probably still exists; please check in Apple Calendar.`);
 }
 
 function writeError(status: number): UserError {
-  if (status === 412) return new UserError('Der Termin wurde inzwischen geändert (oder existiert bereits). Bitte neu laden und die Änderung erneut vornehmen.');
-  if (status === 401) return new UserError('Anmeldung bei iCloud fehlgeschlagen. Apple-ID und App-spezifisches Passwort prüfen.');
-  if (status === 403) return new UserError('iCloud verweigert den Schreibzugriff auf diesen Kalender. Bitte in Apple Kalender prüfen, ob du dort Schreibrechte hast.');
-  if (status === 404) return new UserError('Der Termin oder Kalender wurde nicht gefunden. Bitte die Termin-ID mit list_events oder search_events neu abrufen.');
-  return new UserError(`iCloud hat das Speichern abgelehnt (HTTP ${status}). Bitte die Eingaben prüfen und erneut versuchen; besteht der Fehler weiter, den Termin in Apple Kalender anlegen.`);
+  if (status === 412) return new UserError('The event has changed in the meantime (or already exists). Please reload it and make the change again.');
+  if (status === 401) return new UserError('Sign-in to iCloud failed. Check the Apple ID and app-specific password.');
+  if (status === 403) return new UserError('iCloud refuses write access to this calendar. Please check in Apple Calendar that you have write access there.');
+  if (status === 404) return new UserError('The event or calendar was not found. Please fetch the event ID again with list_events or search_events.');
+  return new UserError(`iCloud rejected the save (HTTP ${status}). Please check the input and try again; if the error persists, create the event in Apple Calendar.`);
 }

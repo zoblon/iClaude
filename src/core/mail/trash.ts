@@ -5,11 +5,11 @@ import { decodeRef } from './ref.js';
 import type { Address, MailboxInfo, MailTrasher, MessageRef, MessageSummary } from './types.js';
 
 export interface TrashItem {
-  /** ID aus list_recent, search_messages, get_message oder get_thread. */
+  /** ID from list_recent, search_messages, get_message or get_thread. */
   id: string;
-  /** Betreff der Mail, wie dort angezeigt. Muss zur Mail passen. */
+  /** Subject of the message as shown there. Must match the message. */
   subject: string;
-  /** Absender der Mail (Adresse, "Name <adresse>" oder Name). Muss zur Mail passen. */
+  /** Sender of the message (address, "Name <address>" or name). Must match the message. */
   from: string;
 }
 
@@ -23,8 +23,8 @@ export interface TrashResult {
 const norm = normText;
 
 /**
- * Enthält die Angabe eine Mailadresse, muss genau diese Adresse unter den Absendern sein.
- * Sonst muss sie dem Anzeigenamen eines Absenders entsprechen.
+ * If the input contains an email address, exactly that address must be among the senders.
+ * Otherwise it must equal the display name of a sender.
  */
 export function senderMatches(expected: string, from: Address[]): boolean {
   const e = expected.trim();
@@ -37,11 +37,11 @@ export function senderMatches(expected: string, from: Address[]): boolean {
   return n !== '' && from.some((a) => a.name !== undefined && norm(a.name) === n);
 }
 
-const WHEN = 'etwa 30 Tage';
+const WHEN = 'about 30 days';
 
 /**
- * Verschiebt Mails in den Papierkorb. Nie endgültig löschen: Die Mails bleiben im Papierkorb und lassen sich dort wiederherstellen.
- * Vor dem Verschieben wird für jede Mail geprüft, dass Betreff und Absender zur Angabe passen. Passt eine nicht, wird nichts verschoben.
+ * Moves messages to the Trash. Never deletes permanently: the messages stay in the Trash and can be restored from there.
+ * Before moving, every message is checked to match the given subject and sender. If any does not match, nothing is moved.
  */
 export class TrashService {
   constructor(
@@ -50,16 +50,16 @@ export class TrashService {
   ) {}
 
   async trash(items: TrashItem[]): Promise<TrashResult> {
-    if (items.length === 0) throw new UserError('Keine Mail angegeben. Bitte mindestens eine Mail nennen.');
+    if (items.length === 0) throw new UserError('No message specified. Please name at least one message.');
     if (items.length > MAX_TRASH_PER_CALL) {
-      throw new UserError(`Zu viele Mails auf einmal (${items.length}, höchstens ${MAX_TRASH_PER_CALL} je Aufruf). Es wurde nichts verschoben. Bitte in kleinere Gruppen aufteilen.`);
+      throw new UserError(`Too many messages at once (${items.length}, at most ${MAX_TRASH_PER_CALL} per call). Nothing was moved. Please split them into smaller groups.`);
     }
 
     const refs: MessageRef[] = items.map((i) => decodeRef(i.id));
     const keys = refs.map((r) => `${r.path}\u0000${r.uidValidity}\u0000${r.uid}`);
-    if (new Set(keys).size !== keys.length) throw new UserError('Dieselbe Mail ist mehrfach angegeben. Es wurde nichts verschoben.');
+    if (new Set(keys).size !== keys.length) throw new UserError('The same message was specified more than once. Nothing was moved.');
 
-    // Rechte zuerst: Ziel (Papierkorb mit Merkmal \Trash) und Ordner stehen fest, bevor irgendetwas geladen wird.
+    // Permissions first: the target (Trash with the \Trash attribute) and the folders are fixed before anything is loaded.
     const grant = authorizeTrash({ mailboxes: await this.mailboxes(), sourcePaths: refs.map((r) => r.path) });
 
     const found = await this.store.summaries(refs);
@@ -68,15 +68,15 @@ export class TrashService {
       const n = i + 1;
       const item = items[i]!;
       if (!s) {
-        problems.push(`Mail ${n}: nicht gefunden (verschoben oder gelöscht?)`);
+        problems.push(`Message ${n}: not found (moved or deleted?)`);
         return;
       }
-      if (!sameText(item.subject, s.subject)) problems.push(`Mail ${n}: Der Betreff passt nicht zur Mail mit dieser ID`);
-      if (!senderMatches(item.from, s.from)) problems.push(`Mail ${n}: Der Absender passt nicht zur Mail mit dieser ID`);
+      if (!sameText(item.subject, s.subject)) problems.push(`Message ${n}: the subject does not match the message with this ID`);
+      if (!senderMatches(item.from, s.from)) problems.push(`Message ${n}: the sender does not match the message with this ID`);
     });
     if (problems.length) {
       throw new UserError(
-        `${problems.join('; ')}. Es wurde nichts verschoben. Die Mails mit list_recent oder search_messages neu abrufen und ID, Betreff und Absender unverändert übernehmen.`,
+        `${problems.join('; ')}. Nothing was moved. Fetch the messages again with list_recent or search_messages and copy ID, subject and sender unchanged.`,
       );
     }
 
@@ -86,7 +86,7 @@ export class TrashService {
       trashMailbox: done.trash,
       count: done.moved,
       moved: summaries.map((s) => ({ id: s.id, mailbox: s.mailbox, subject: s.subject, from: s.from, date: s.date })),
-      note: `Die Mails liegen jetzt im Papierkorb und sind dort ${WHEN} wiederherstellbar (in Apple Mail aus dem Papierkorb zurücklegen). Danach löscht iCloud sie endgültig. Dieser Konnektor löscht nie endgültig.`,
+      note: `The messages are now in the Trash and can be restored from there for ${WHEN} (in Apple Mail, move them out of the Trash). After that, iCloud deletes them permanently. This connector never deletes permanently.`,
     };
   }
 }

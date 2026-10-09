@@ -1,14 +1,14 @@
 /**
- * Minimaler IMAP-Server für Tests. Spricht genug IMAP für imapflow und protokolliert jeden Befehl.
- * Verhält sich wie ein echter Server: Wer ein Postfach mit SELECT (beschreibbar) öffnet und den Inhalt ohne PEEK holt,
- * markiert die Nachricht als gelesen. Veränderungen (STORE, COPY, APPEND, …) werden als Verstöße vermerkt.
+ * Minimal IMAP server for tests. Speaks enough IMAP for imapflow and logs every command.
+ * Behaves like a real server: a client that opens a mailbox with SELECT (read-write) and fetches the content without PEEK
+ * marks the message as read. Changes (STORE, COPY, APPEND, …) are recorded as violations.
  */
 import net from 'node:net';
 
 export interface MiniMessage {
   uid: number;
   flags: string[];
-  /** Rohtext (RFC 822) */
+  /** Raw source (RFC 822) */
   raw: string;
   subject: string;
   from: string;
@@ -35,16 +35,16 @@ function addr(s: string): string {
 }
 
 function envelope(m: MiniMessage, inReplyTo?: string): string {
-  return `(${q(m.date)} ${q(m.subject)} ${addr(m.from)} ${addr(m.from)} ${addr(m.from)} ${addr('Ich <me@icloud.com>')} NIL NIL ${inReplyTo ? q(inReplyTo) : 'NIL'} ${q(m.messageId)})`;
+  return `(${q(m.date)} ${q(m.subject)} ${addr(m.from)} ${addr(m.from)} ${addr(m.from)} ${addr('Me <me@icloud.com>')} NIL NIL ${inReplyTo ? q(inReplyTo) : 'NIL'} ${q(m.messageId)})`;
 }
 
 function bodyStructure(m: MiniMessage): string {
   const text = '("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 100 5 NIL NIL NIL)';
   if (!m.attachment) return text;
-  return `(${text}("APPLICATION" "PDF" ("NAME" "rechnung.pdf") NIL NIL "BASE64" 1000 NIL ("ATTACHMENT" ("FILENAME" "rechnung.pdf")) NIL) "MIXED" ("BOUNDARY" "b") NIL NIL)`;
+  return `(${text}("APPLICATION" "PDF" ("NAME" "invoice.pdf") NIL NIL "BASE64" 1000 NIL ("ATTACHMENT" ("FILENAME" "invoice.pdf")) NIL) "MIXED" ("BOUNDARY" "b") NIL NIL)`;
 }
 
-/** Zahlenmengen wie "1:*", "3", "1,2,5:7". */
+/** Sequence sets like "1:*", "3", "1,2,5:7". */
 function expand(set: string, max: number): number[] {
   const out: number[] = [];
   for (const part of set.split(',')) {
@@ -57,27 +57,27 @@ function expand(set: string, max: number): number[] {
 }
 
 export class MiniImap {
-  /** Alle empfangenen Befehle (ohne Tag, Passwort geschwärzt). */
+  /** All received commands (without tag, password redacted). */
   commands: string[] = [];
   violations: string[] = [];
-  /** Ordner, in die ein APPEND mit \\Draft erlaubt ist (leer = jedes APPEND ist ein Verstoß). */
+  /** Folders where an APPEND with \\Draft is allowed (empty = every APPEND is a violation). */
   allowAppend = new Set<string>();
   appends: Array<{ box: string; flags: string[]; raw: string }> = [];
-  /** Ordner, die beschreibbar geöffnet (SELECT) werden dürfen. Sonst ist jedes SELECT ein Verstoß. */
+  /** Folders that may be opened read-write (SELECT). Otherwise every SELECT is a violation. */
   allowWriteSelect = new Set<string>();
-  /** Zielordner, in die per MOVE verschoben werden darf. Sonst ist jedes MOVE ein Verstoß. */
+  /** Target folders that MOVE may move into. Otherwise every MOVE is a violation. */
   allowMove = new Set<string>();
-  /** Erfolgreich ausgeführte Verschiebungen. */
+  /** Successfully executed moves. */
   moves: Array<{ from: string; to: string; uids: number[] }> = [];
   private server?: net.Server;
   port = 0;
 
-  /** MOVE-Versuche, die der Server als unbekannten Befehl abgewiesen hat (nur bei move: false). */
+  /** MOVE attempts the server rejected as an unknown command (only with move: false). */
   rejectedMoves: string[] = [];
 
   /**
-   * move: Der Server versteht (UID) MOVE. Sonst antwortet er wie ein Server ohne die Erweiterung mit BAD.
-   * advertiseMove: Er nennt MOVE in der Fähigkeitenliste (Standard: wie move). iCloud versteht MOVE, nennt es aber nicht (live gemessen).
+   * move: the server understands (UID) MOVE. Otherwise it answers with BAD, like a server without the extension.
+   * advertiseMove: it lists MOVE in its capabilities (default: same as move). iCloud understands MOVE but does not list it (verified live).
    */
   constructor(
     public boxes: Record<string, MiniBox>,
@@ -137,7 +137,7 @@ export class MiniImap {
           return send(`${tag} OK [CAPABILITY ${this.caps}] Logged in\r\n`);
         case 'LIST':
         case 'LSUB':
-          // LIST "" "" fragt nur nach dem Trennzeichen
+          // LIST "" "" only asks for the hierarchy delimiter
           if (/^""\s+""\s*$/.test(args.trim())) {
             send(`* ${cmd} (\\Noselect) "/" ""\r\n`);
             return ok();
@@ -158,14 +158,14 @@ export class MiniImap {
           const b = this.boxes[name];
           if (!b) return send(`${tag} NO no such mailbox\r\n`);
           selected = { name, readOnly: cmd === 'EXAMINE' };
-          if (cmd === 'SELECT' && !this.allowWriteSelect.has(name)) this.violations.push(`SELECT ${name} (beschreibbar geöffnet)`);
+          if (cmd === 'SELECT' && !this.allowWriteSelect.has(name)) this.violations.push(`SELECT ${name} (opened read-write)`);
           send('* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n');
           send(`* ${b.messages.length} EXISTS\r\n* 0 RECENT\r\n`);
           send(`* OK [UIDVALIDITY ${b.uidValidity}] ok\r\n* OK [UIDNEXT ${Math.max(0, ...b.messages.map((x) => x.uid)) + 1}] ok\r\n`);
           return send(`${tag} OK [${cmd === 'EXAMINE' ? 'READ-ONLY' : 'READ-WRITE'}] done\r\n`);
         }
         case 'MOVE': {
-          // Erlaubt nur mit angebotener Fähigkeit, aus einem beschreibbar geöffneten Ordner in einen freigegebenen Zielordner.
+          // Allowed only with the capability, from a folder opened read-write into an allowed target folder.
           const mv = /^(\S+)\s+(.+)$/.exec(args);
           const dest = mv ? mv[2]!.trim().replace(/^"|"$/g, '') : '';
           if (!this.opts.move) {
@@ -212,7 +212,7 @@ export class MiniImap {
           const b = this.boxes[selected.name]!;
           const upper = args.toUpperCase();
           const quoted = [...args.matchAll(/"([^"]*)"|(?<=\s)([^\s()"]+)(?=\s|\)|$)/g)].map((x) => (x[1] ?? x[2] ?? '').toLowerCase());
-          // Wie iCloud: Kopfzeilen-Suchen finden eine Message-ID nur mit spitzen Klammern; ohne Klammern gibt es 0 Treffer.
+          // Like iCloud: header searches only find a Message-ID with angle brackets; without them there are 0 hits.
           const headerValues = [...args.matchAll(/HEADER\s+"?[\w-]+"?\s+("[^"]*"|\S+)/gi)].map((x) => x[1]!.replace(/^"|"$/g, '').toLowerCase());
           const badHeader = headerValues.filter((v) => !v.startsWith('<'));
           const goodHeader = headerValues.filter((v) => v.startsWith('<'));
@@ -241,7 +241,7 @@ export class MiniImap {
             if (!msg) continue;
             const seq = b.messages.indexOf(msg) + 1;
             if (nonPeek) {
-              this.violations.push(`FETCH ohne PEEK: ${attrs}`);
+              this.violations.push(`FETCH without PEEK: ${attrs}`);
               if (!selected.readOnly && !msg.flags.includes('\\Seen')) msg.flags.push('\\Seen');
             }
             const parts: string[] = [`UID ${msg.uid}`];
@@ -268,7 +268,7 @@ export class MiniImap {
           return ok();
         }
         default:
-          this.violations.push(`unbekannter Befehl: ${cmd}`);
+          this.violations.push(`unknown command: ${cmd}`);
           return send(`${tag} BAD unknown\r\n`);
       }
     };
@@ -324,7 +324,7 @@ export class MiniImap {
 export const rfc822 = (o: { from: string; to?: string; subject: string; messageId: string; date: string; inReplyTo?: string; references?: string; body: string; html?: string }): string =>
   [
     `From: ${o.from}`,
-    `To: ${o.to ?? 'Ich <me@icloud.com>'}`,
+    `To: ${o.to ?? 'Me <me@icloud.com>'}`,
     `Subject: ${o.subject}`,
     `Date: ${o.date}`,
     `Message-ID: ${o.messageId}`,

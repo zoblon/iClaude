@@ -12,7 +12,7 @@ export interface RecurrenceInput {
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
   interval?: number | undefined;
   count?: number | undefined;
-  /** Letzter Tag der Serie (Datum). */
+  /** Last day of the series (date). */
   until?: string | undefined;
   weekdays?: Weekday[] | undefined;
 }
@@ -20,7 +20,7 @@ export interface RecurrenceInput {
 export interface NewEvent {
   title: string;
   start: DateTime;
-  /** Ende (bei ganztägig: letzter Tag, einschließlich). */
+  /** End (for all-day: last day, inclusive). */
   end: DateTime;
   allDay: boolean;
   zone: string;
@@ -34,13 +34,13 @@ export interface EventPatch {
   title?: string | undefined;
   location?: string | undefined;
   notes?: string | undefined;
-  /** Neue Zeiten; fehlt eines von beiden, bleibt die Dauer bzw. der andere Wert. */
+  /** New times; if one of the two is missing, the duration or the other value is kept. */
   time?: { start: DateTime; end: DateTime; allDay: boolean } | undefined;
   alertsMinutes?: number[] | undefined;
   zone: string;
 }
 
-const PRODID = '-//icloud-mcp//lokaler Konnektor//DE';
+const PRODID = '-//icloud-mcp//local connector//EN';
 
 const BERLIN_VTIMEZONE = [
   'BEGIN:VTIMEZONE',
@@ -68,7 +68,7 @@ const offsetText = (minutes: number) => {
   return `${sign}${String(Math.floor(a / 60)).padStart(2, '0')}${String(a % 60).padStart(2, '0')}`;
 };
 
-/** Zeitzonendefinition für eine IANA-Zone: Vorlage für Berlin, sonst aus den tatsächlichen Umstellungen erzeugt. */
+/** Time zone definition for an IANA zone: template for Berlin, otherwise generated from the actual transitions. */
 export function vtimezoneFor(zone: string): ICAL.Component {
   if (zone === 'Europe/Berlin') return new ICAL.Component(ICAL.parse(`BEGIN:VCALENDAR\r\n${BERLIN_VTIMEZONE}\r\nEND:VCALENDAR`)).getFirstSubcomponent('vtimezone')!;
   const year = DateTime.now().year;
@@ -79,7 +79,7 @@ export function vtimezoneFor(zone: string): ICAL.Component {
   for (let d = prev.plus({ hours: 12 }); d.year <= year + 10; d = d.plus({ hours: 12 })) {
     if (d.offset !== prev.offset) {
       sawTransition = true;
-      // Wandzeit unmittelbar vor der Umstellung (in der alten Zeit)
+      // Wall-clock time immediately before the transition (in the old offset)
       const wall = DateTime.fromMillis(d.toMillis() - 12 * 3600_000, { zone }).plus({ hours: 12 });
       const isDst = d.isInDST;
       const kind = isDst ? 'DAYLIGHT' : 'STANDARD';
@@ -131,32 +131,32 @@ function setAlarms(vevent: ICAL.Component, minutes: number[], title: string): vo
   for (const m of [...new Set(minutes)]) {
     const alarm = new ICAL.Component('valarm');
     alarm.addPropertyWithValue('action', 'DISPLAY');
-    alarm.addPropertyWithValue('description', title || 'Erinnerung');
+    alarm.addPropertyWithValue('description', title || 'Reminder');
     alarm.addPropertyWithValue('trigger', ICAL.Duration.fromSeconds(-m * 60));
     vevent.addSubcomponent(alarm);
   }
 }
 
 function buildRecurrence(r: RecurrenceInput, ev: NewEvent): ICAL.Recur {
-  if (r.count !== undefined && r.until !== undefined) throw new UserError('Wiederholung: entweder count oder until angeben, nicht beides.');
+  if (r.count !== undefined && r.until !== undefined) throw new UserError('Recurrence: specify either count or until, not both.');
   const data: Record<string, unknown> = { freq: r.frequency, interval: r.interval ?? 1 };
   if (r.count !== undefined) data.count = r.count;
   if (r.until !== undefined) {
     const d = DateTime.fromISO(r.until, { zone: ev.zone });
-    if (!d.isValid) throw new UserError(`Wiederholung: until "${r.until}" ist ungültig. Erwartet: JJJJ-MM-TT.`);
-    if (d.endOf('day') < ev.start) throw new UserError('Wiederholung: until liegt vor dem Beginn des Termins.');
+    if (!d.isValid) throw new UserError(`Recurrence: until "${r.until}" is invalid. Expected: YYYY-MM-DD.`);
+    if (d.endOf('day') < ev.start) throw new UserError('Recurrence: until is before the start of the event.');
     data.until = ev.allDay
       ? ICAL.Time.fromData({ year: d.year, month: d.month, day: d.day, isDate: true })
       : ICAL.Time.fromJSDate(d.endOf('day').toJSDate(), true);
   }
   if (r.weekdays?.length) {
-    if (r.frequency !== 'WEEKLY') throw new UserError('Wiederholung: weekdays gibt es nur bei frequency=WEEKLY.');
+    if (r.frequency !== 'WEEKLY') throw new UserError('Recurrence: weekdays is only allowed with frequency=WEEKLY.');
     data.parts = { BYDAY: r.weekdays };
   }
   return ICAL.Recur.fromData(data);
 }
 
-/** Baut die .ics-Datei für einen neuen Termin. Setzt nie Teilnehmer oder Organisator. */
+/** Builds the .ics file for a new event. Never sets attendees or organizer. */
 export function buildEventIcs(ev: NewEvent): { uid: string; ics: string } {
   const uid = randomUUID().toUpperCase();
   const root = new ICAL.Component(['vcalendar', [], []]);
@@ -174,7 +174,7 @@ export function buildEventIcs(ev: NewEvent): { uid: string; ics: string } {
   v.addPropertyWithValue('sequence', 0);
   v.addPropertyWithValue('summary', ev.title);
   v.addProperty(dateProp('dtstart', ev.start, ev.allDay, ev.zone));
-  // Ganztägig: DTEND ist exklusiv.
+  // All-day: DTEND is exclusive.
   v.addProperty(dateProp('dtend', ev.allDay ? ev.end.plus({ days: 1 }) : ev.end, ev.allDay, ev.zone));
   setText(v, 'location', ev.location);
   setText(v, 'description', ev.notes);
@@ -192,7 +192,7 @@ function parse(ics: string): ICAL.Component {
   try {
     return new ICAL.Component(ICAL.parse(ics));
   } catch {
-    throw new UserError('Der Termin konnte nicht gelesen werden (ungültiges iCalendar-Format). Bitte den Termin in Apple Kalender prüfen.');
+    throw new UserError('The event could not be read (invalid iCalendar format). Please check the event in Apple Calendar.');
   }
 }
 
@@ -200,7 +200,7 @@ function masterOf(root: ICAL.Component): ICAL.Component | undefined {
   return root.getAllSubcomponents('vevent').find((c) => !c.hasProperty('recurrence-id'));
 }
 
-/** Eigenschaften des bestehenden Termins für die Rechteprüfung. */
+/** Properties of the existing event for the permission check. */
 export function analyzeEvent(ics: string): EventFacts & { uid: string; allDay: boolean } {
   const root = parse(ics);
   const events = root.getAllSubcomponents('vevent');
@@ -221,10 +221,10 @@ export function analyzeEvent(ics: string): EventFacts & { uid: string; allDay: b
   };
 }
 
-/** Bestehende Zeiten als Millisekunden (für "nur Start verschieben, Dauer behalten"). */
+/** Existing times in milliseconds (for "move only the start, keep the duration"). */
 export function currentTimes(ics: string, zone: string): { startMs: number; endMs: number; allDay: boolean } {
   const master = masterOf(parse(ics));
-  if (!master) throw new UserError('Kein Haupttermin gefunden. Bitte den Termin in Apple Kalender prüfen.');
+  if (!master) throw new UserError('No master event found. Please check the event in Apple Calendar.');
   const ev = new ICAL.Event(master);
   const tzid = master.getFirstProperty('dtstart')?.getParameter('tzid') as string | undefined;
   const allDay = ev.startDate.isDate;
@@ -234,22 +234,22 @@ export function currentTimes(ics: string, zone: string): { startMs: number; endM
   return { startMs, endMs, allDay };
 }
 
-/** Ein gelöschter Termin in der Form, die create_event versteht. */
+/** A deleted event in the form create_event understands. */
 export interface RestorableEvent {
   title: string;
-  /** Mit Uhrzeit "2026-10-20T14:00:00+02:00"; bei ganztägig nur das Datum. */
+  /** With time "2026-10-20T14:00:00+02:00"; for all-day only the date. */
   start: string;
-  /** Bei ganztägig der LETZTE Tag (einschließlich), wie create_event ihn erwartet. */
+  /** For all-day the LAST day (inclusive), as create_event expects it. */
   end: string;
   allDay: boolean;
   location?: string;
   notes?: string;
   alertsMinutesBefore?: number[];
-  /** Wiederholung im Format von create_event (nur wenn die Regel vollständig darstellbar ist). */
+  /** Recurrence in the create_event format (only if the rule can be fully represented). */
   recurrence?: { frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY'; interval?: number; count?: number; until?: string; weekdays?: Weekday[] };
-  /** Die ursprüngliche Wiederholungsregel (RRULE) im Klartext, falls vorhanden. */
+  /** The original recurrence rule (RRULE) as plain text, if present. */
   recurrenceRule?: string;
-  /** Was sich mit create_event nicht vollständig wiederherstellen lässt (dann hilft die .ics-Sicherung). */
+  /** What cannot be fully restored with create_event (the .ics backup helps then). */
   restoreHints: string[];
 }
 
@@ -264,10 +264,10 @@ function recurrenceOf(master: ICAL.Component, start: DateTime, zone: string, hin
   const rule = recur.toString();
   const freq = String(recur.freq ?? '');
   if (!(FREQS as readonly string[]).includes(freq)) {
-    hints.push('Die Wiederholungsregel lässt sich mit create_event nicht darstellen (siehe recurrenceRule und die .ics-Sicherung).');
+    hints.push('The recurrence rule cannot be represented with create_event (see recurrenceRule and the .ics backup).');
     return { rule };
   }
-  // Alle BY…-Teile, die nicht schon dem Beginn des Termins entsprechen (das ist bei create_event der Normalfall), machen die Regel nicht darstellbar.
+  // Any BY… part that does not just match the event start (the normal case for create_event) makes the rule unrepresentable.
   let representable = true;
   let weekdays: Weekday[] | undefined;
   for (const [name, raw] of Object.entries(recur.parts ?? {})) {
@@ -280,7 +280,7 @@ function recurrenceOf(master: ICAL.Component, start: DateTime, zone: string, hin
     else representable = false;
   }
   if (!representable) {
-    hints.push('Die Wiederholungsregel hat Besonderheiten, die create_event nicht kennt (siehe recurrenceRule und die .ics-Sicherung).');
+    hints.push('The recurrence rule has special parts that create_event does not support (see recurrenceRule and the .ics backup).');
     return { rule };
   }
   let until: string | undefined;
@@ -298,15 +298,15 @@ function recurrenceOf(master: ICAL.Component, start: DateTime, zone: string, hin
   return { recurrence: out, rule };
 }
 
-/** Beschreibt einen (zu löschenden) Termin so, dass er mit create_event neu angelegt werden kann. Hinweise nennen, was dabei verloren ginge. */
+/** Describes an event (about to be deleted) so that it can be re-created with create_event. Hints name what would be lost. */
 export function describeEvent(ics: string, zone: string): RestorableEvent {
   const root = parse(ics);
   const master = masterOf(root);
-  if (!master) throw new UserError('Kein Haupttermin gefunden. Bitte den Termin in Apple Kalender prüfen.');
+  if (!master) throw new UserError('No master event found. Please check the event in Apple Calendar.');
   const t = currentTimes(ics, zone);
   const hints: string[] = [];
   const startDt = DateTime.fromMillis(t.startMs, { zone });
-  const title = String(master.getFirstPropertyValue('summary') ?? '').trim() || '(ohne Titel)';
+  const title = String(master.getFirstPropertyValue('summary') ?? '').trim() || '(no title)';
   const location = String(master.getFirstPropertyValue('location') ?? '').trim();
   const notes = String(master.getFirstPropertyValue('description') ?? '').trim();
 
@@ -326,20 +326,20 @@ export function describeEvent(ics: string, zone: string): RestorableEvent {
     }
     lost++;
   }
-  if (lost) hints.push(`${lost} Erinnerung(en) haben eine Form, die create_event nicht kennt (z. B. feste Uhrzeit).`);
+  if (lost) hints.push(`${lost} reminder(s) have a form that create_event does not support (e.g. a fixed time).`);
   if (alerts.length > 5) {
-    hints.push('Es gab mehr als 5 Erinnerungen; create_event nimmt höchstens 5.');
+    hints.push('There were more than 5 reminders; create_event accepts at most 5.');
     alerts.length = 5;
   }
 
   const { recurrence, rule } = recurrenceOf(master, startDt, zone, hints);
-  if (master.hasProperty('rdate')) hints.push('Die Serie hat zusätzliche Einzeltermine (RDATE), die create_event nicht kennt.');
+  if (master.hasProperty('rdate')) hints.push('The series has additional single dates (RDATE) that create_event does not support.');
   if (master.hasProperty('exdate') || root.getAllSubcomponents('vevent').some((e) => e.hasProperty('recurrence-id'))) {
-    hints.push('Die Serie hatte Ausnahmen (gelöschte oder verschobene Vorkommen). Sie lassen sich mit create_event nicht abbilden; die .ics-Sicherung enthält sie.');
+    hints.push('The series had exceptions (deleted or moved occurrences). They cannot be represented with create_event; the .ics backup contains them.');
   }
-  if (title.length > 300 || location.length > 300 || notes.length > 5000) hints.push('Ein Text ist länger als create_event erlaubt (Titel und Ort 300, Notiz 5000 Zeichen). Der volle Text steht in der .ics-Sicherung.');
+  if (title.length > 300 || location.length > 300 || notes.length > 5000) hints.push('A text is longer than create_event allows (title and location 300, notes 5000 characters). The full text is in the .ics backup.');
   if (t.allDay) {
-    // Ende bei ganztägig: letzter Tag einschließlich
+    // End for all-day: last day, inclusive
     return {
       title,
       start: startDt.toISODate() ?? '',
@@ -372,13 +372,13 @@ function names(c: ICAL.Component): string[] {
 }
 
 /**
- * Wendet eine Teiländerung auf die bestehende .ics an. Das Dokument wird in-place bearbeitet,
- * daher bleiben alle nicht angefassten (auch unbekannte) Eigenschaften erhalten.
+ * Applies a partial change to the existing .ics. The document is edited in place,
+ * so all untouched (including unknown) properties are preserved.
  */
 export function applyPatch(ics: string, patch: EventPatch): string {
   const root = parse(ics);
   const master = masterOf(root);
-  if (!master) throw new UserError('Kein Haupttermin gefunden. Bitte den Termin in Apple Kalender prüfen.');
+  if (!master) throw new UserError('No master event found. Please check the event in Apple Calendar.');
   const before = names(master);
   const removable = new Set<string>();
 
@@ -410,10 +410,10 @@ export function applyPatch(ics: string, patch: EventPatch): string {
   const seq = Number(master.getFirstPropertyValue('sequence') ?? 0);
   master.updatePropertyWithValue('sequence', Number.isFinite(seq) ? seq + 1 : 1);
 
-  // Nichts außer dem Gewollten darf verloren gehen.
+  // Nothing except what was intended may be lost.
   const after = names(master);
   const lost = before.filter((n) => !removable.has(n) && !after.includes(n));
-  if (lost.length) throw new UserError(`Interner Schutz: Die Änderung hätte Eigenschaften entfernt (${[...new Set(lost)].join(', ')}). Abgebrochen.`);
+  if (lost.length) throw new UserError(`Internal safeguard: the change would have removed properties (${[...new Set(lost)].join(', ')}). Aborted.`);
 
   const out = root.toString();
   assertSafeOutput(out, { attendees: analyzeEvent(ics).hasAttendees ? -1 : 0, organizerFrom: ics });
@@ -421,21 +421,21 @@ export function applyPatch(ics: string, patch: EventPatch): string {
 }
 
 /**
- * Letzte Sicherung vor dem Schreiben: keine Teilnehmer, keine Einladungsmethode,
- * Organisator unverändert.
+ * Last safeguard before writing: no attendees, no invitation method,
+ * organizer unchanged.
  */
 export function assertSafeOutput(ics: string, rule: { attendees: number; organizerFrom?: string }): void {
   const root = parse(ics);
-  if (root.hasProperty('method')) throw new UserError('Interner Schutz: METHOD (Einladung) ist nicht erlaubt. Abgebrochen, es wurde nichts geschrieben.');
+  if (root.hasProperty('method')) throw new UserError('Internal safeguard: METHOD (invitation) is not allowed. Aborted, nothing was written.');
   const events = root.getAllSubcomponents('vevent');
-  if (!events.length) throw new UserError('Interner Schutz: Kein Termin im Ergebnis. Abgebrochen, es wurde nichts geschrieben.');
+  if (!events.length) throw new UserError('Internal safeguard: no event in the result. Aborted, nothing was written.');
   const attendees = events.reduce((n, e) => n + e.getAllProperties('attendee').length, 0);
   if (rule.attendees >= 0 && attendees !== rule.attendees) {
-    throw new UserError('Interner Schutz: Der Termin enthielte Teilnehmer. Abgebrochen, es wurde nichts geschrieben. Bitte die Eingaben ohne Teilnehmer wiederholen.');
+    throw new UserError('Internal safeguard: the event would contain attendees. Aborted, nothing was written. Please repeat the input without attendees.');
   }
   const orgBefore = rule.organizerFrom ? analyzeEvent(rule.organizerFrom).organizer : undefined;
   const orgAfter = analyzeEvent(ics).organizer;
   if (rule.organizerFrom ? orgBefore !== orgAfter : orgAfter) {
-    throw new UserError('Interner Schutz: Der Organisator würde verändert. Abgebrochen, es wurde nichts geschrieben. Bitte die Änderung direkt in Apple Kalender vornehmen.');
+    throw new UserError('Internal safeguard: the organizer would be changed. Aborted, nothing was written. Please make the change directly in Apple Calendar.');
   }
 }

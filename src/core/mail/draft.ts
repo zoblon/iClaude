@@ -19,9 +19,9 @@ export interface DraftInput {
   cc?: string[] | undefined;
   subject?: string | undefined;
   body: string;
-  /** ID einer Nachricht, auf die geantwortet wird (setzt In-Reply-To und References). */
+  /** ID of a message being replied to (sets In-Reply-To and References). */
   replyToId?: string | undefined;
-  /** Beim Antworten die Originalnachricht zitieren (Standard: ja). */
+  /** Quote the original message when replying (default: yes). */
   quote?: boolean | undefined;
 }
 
@@ -51,7 +51,7 @@ function toMailboxes(list: string[] | undefined, label: string): Mailbox[] {
 const fromAddress = (a: Address): Mailbox | undefined =>
   a.address ? { ...(a.name ? { name: a.name.replace(/[\r\n\u0000-\u001F]/g, ' ').slice(0, 100) } : {}), address: a.address } : undefined;
 
-/** "Re: ..." nur einmal voranstellen (auch wenn schon "AW:" o. Ä. dasteht). */
+/** Prefix "Re: ..." only once (also if "AW:" or similar is already there). */
 export function replySubject(original: string): string {
   return /^\s*(re|aw|antw|sv)\s*:/i.test(original) ? original.trim() : `Re: ${original.trim()}`;
 }
@@ -60,12 +60,12 @@ export function quoteBlock(text: string, who: string, date: DateTime | undefined
   const chars = Array.from(text);
   const cut = chars.length > MAX_QUOTE_CHARS;
   const body = (cut ? chars.slice(0, MAX_QUOTE_CHARS).join('') : text).split('\n').map((l) => (l ? `> ${l}` : '>')).join('\n');
-  const when = date ? `Am ${date.toFormat('dd.LL.yyyy')} um ${date.toFormat('HH:mm')} schrieb ${who}:` : `${who} schrieb:`;
+  const when = date ? `On ${date.setLocale('en-US').toFormat('LLL d, yyyy')}, at ${date.toFormat('HH:mm')}, ${who} wrote:` : `${who} wrote:`;
   return `${when}\n${body}${cut ? '\n> […]' : ''}`;
 }
 
 /**
- * Legt Entwürfe an. Es wird nie gesendet. Absender ist immer die eigene iCloud-Adresse, Bcc und Anhänge gibt es nicht.
+ * Creates drafts. Nothing is ever sent. The sender is always the user's own iCloud address; there is no Bcc and no attachments.
  */
 export class DraftService {
   constructor(
@@ -77,14 +77,14 @@ export class DraftService {
 
   async createDraft(a: DraftInput): Promise<DraftView> {
     const body = a.body.replace(/\s+$/g, '');
-    if (!body.trim()) throw new UserError('Der Text des Entwurfs darf nicht leer sein. Bitte einen Text angeben.');
-    if (Array.from(body).length > MAX_BODY_CHARS) throw new UserError(`Der Text ist zu lang (höchstens ${MAX_BODY_CHARS} Zeichen). Bitte kürzen.`);
+    if (!body.trim()) throw new UserError('The draft text must not be empty. Please provide a text.');
+    if (Array.from(body).length > MAX_BODY_CHARS) throw new UserError(`The text is too long (max. ${MAX_BODY_CHARS} characters). Please shorten it.`);
 
     let to = toMailboxes(a.to, 'to');
     const cc = toMailboxes(a.cc, 'cc');
-    if (to.length + cc.length > MAX_RECIPIENTS) throw new UserError(`Zu viele Empfänger (höchstens ${MAX_RECIPIENTS}). Bitte aufteilen.`);
+    if (to.length + cc.length > MAX_RECIPIENTS) throw new UserError(`Too many recipients (max. ${MAX_RECIPIENTS}). Please split them up.`);
 
-    // Rechte zuerst: der Zielordner steht fest (Entwürfe), bevor irgendetwas gebaut oder geladen wird.
+    // Permissions first: the target folder (Drafts) is fixed before anything is built or loaded.
     const grant = authorizeDraft(await this.mailboxes());
 
     let subject = (a.subject ?? '').replace(/[\r\n\t]+/g, ' ').trim();
@@ -96,28 +96,28 @@ export class DraftService {
     if (a.replyToId) {
       const original = await this.reader.fetchSource(decodeRef(a.replyToId));
       const msg = await parseMessage(original.source, 'text');
-      if (!msg.messageId) throw new UserError('Die Originalnachricht hat keine Message-ID, daher kann kein Antwort-Entwurf gebaut werden. Bitte einen neuen Entwurf ohne reply_to_id anlegen.');
+      if (!msg.messageId) throw new UserError('The original message has no Message-ID, so no reply draft can be built. Please create a new draft without reply_to_id.');
       inReplyTo = msg.messageId;
       references = [...msg.references, msg.messageId].slice(-MAX_REFERENCES);
       if (!subject) subject = replySubject(msg.subject);
       if (!to.length) {
         const candidates = (msg.replyTo.length ? msg.replyTo : msg.from).map(fromAddress).filter((m): m is Mailbox => Boolean(m));
-        // Antwort auf eine eigene Nachricht: an die ursprünglichen Empfänger
+        // Reply to one of the user's own messages: address the original recipients
         const others = candidates.some((m) => same(m.address, this.cfg.mailUser)) ? msg.to.map(fromAddress).filter((m): m is Mailbox => Boolean(m)) : candidates;
         to = others.filter((m) => !same(m.address, this.cfg.mailUser)).slice(0, MAX_RECIPIENTS);
         if (!to.length) to = others.slice(0, MAX_RECIPIENTS);
       }
       if (a.quote ?? true) {
-        const who = msg.from[0] ? show({ ...(msg.from[0].name ? { name: msg.from[0].name } : {}), address: msg.from[0].address ?? '' }).trim() : 'Unbekannt';
+        const who = msg.from[0] ? show({ ...(msg.from[0].name ? { name: msg.from[0].name } : {}), address: msg.from[0].address ?? '' }).trim() : 'Unknown';
         const when = msg.date ? DateTime.fromISO(msg.date).setZone(this.cfg.timezone) : undefined;
         text = `${body}\n\n${quoteBlock(tidy(msg.text), who, when?.isValid ? when : undefined)}`;
         quoted = true;
       }
     }
 
-    if (!to.length && !cc.length) throw new UserError('Bitte mindestens einen Empfänger angeben (to oder cc).');
-    if (!subject) throw new UserError('Bitte einen Betreff angeben (oder reply_to_id verwenden).');
-    if (Array.from(subject).length > 300) throw new UserError('Der Betreff ist zu lang (höchstens 300 Zeichen).');
+    if (!to.length && !cc.length) throw new UserError('Please specify at least one recipient (to or cc).');
+    if (!subject) throw new UserError('Please specify a subject (or use reply_to_id).');
+    if (Array.from(subject).length > 300) throw new UserError('The subject is too long (max. 300 characters).');
 
     const from: Mailbox = { address: this.cfg.mailUser };
     const domain = this.cfg.mailUser.split('@')[1] ?? 'icloud.com';
@@ -138,11 +138,11 @@ export class DraftService {
       ...(inReplyTo ? { inReplyTo } : {}),
       quoted,
       bodyChars: Array.from(text).length,
-      note: 'Entwurf liegt im Ordner Entwürfe und wurde NICHT gesendet. Bitte in Apple Mail prüfen und selbst senden.',
+      note: 'The draft is in the Drafts folder and was NOT sent. Please review it in Apple Mail and send it yourself.',
     };
   }
 
-  /** Letzte Sicherung: Absender, Empfänger und Kopfzeilen sind genau wie gewollt, nichts Zusätzliches. */
+  /** Last safeguard: sender, recipients and headers are exactly as intended, nothing extra. */
   private async assertSafe(raw: Buffer, want: { from: Mailbox; to: Mailbox[]; cc: Mailbox[] }): Promise<void> {
     const p = await simpleParser(raw);
     const addrs = (a: unknown) =>
@@ -157,6 +157,6 @@ export class DraftService {
       !p.headers.has('reply-to') &&
       !p.headers.has('return-path') &&
       (p.attachments ?? []).length === 0;
-    if (!ok) throw new UserError('Interner Schutz: Absender oder Empfänger des Entwurfs stimmen nicht mit der Eingabe überein. Es wurde nichts geschrieben.');
+    if (!ok) throw new UserError('Internal safeguard: sender or recipients of the draft do not match the input. Nothing was written.');
   }
 }

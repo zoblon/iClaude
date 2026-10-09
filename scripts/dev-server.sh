@@ -1,6 +1,6 @@
 #!/bin/sh
-# Startet den Server für Entwicklung und Inspector-Tests.
-# Lädt .env selbst, damit Zugangsdaten nie als Kommandozeilenargument auftauchen.
+# Starts the server for development and Inspector tests.
+# Loads .env itself so credentials never appear as command-line arguments.
 cd "$(dirname "$0")/.." || exit 1
 set -a
 . ./.env

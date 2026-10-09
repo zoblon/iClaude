@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { DateTime } from 'luxon';
 import { UserError, log } from '../errors.js';
 
-/** Ordner für Sicherungen gelöschter Termine (nur der Nutzer darf ihn lesen). */
+/** Folder for backups of deleted events (readable only by the user). */
 export function defaultBackupDir(): string {
   return join(homedir(), 'Library', 'Application Support', 'icloud-mcp', 'deleted');
 }
@@ -12,13 +12,13 @@ export function defaultBackupDir(): string {
 export const BACKUP_MAX_AGE_DAYS = 90;
 export const BACKUP_MAX_FILES = 200;
 
-/** Dateien, die dieser Konnektor selbst anlegt: "2026-10-08_191530_Titel.ics". Alles andere im Ordner wird nie angefasst. */
+/** Files this connector creates itself: "2026-10-08_191530_Title.ics". Nothing else in the folder is ever touched. */
 const OWN_FILE = /^\d{4}-\d{2}-\d{2}_\d{6}_.*\.ics$/;
 
 export interface BackupOptions {
   dir: string;
   zone: string;
-  /** Jetzt in Millisekunden (für Tests änderbar). */
+  /** Current time in milliseconds (overridable for tests). */
   now?: () => number;
   maxAgeDays?: number;
   maxFiles?: number;
@@ -29,7 +29,7 @@ export interface SavedBackup {
   path: string;
 }
 
-/** Titel für den Dateinamen: Buchstaben, Ziffern, Leerzeichen, Bindestrich; alles andere wird zu "_". */
+/** Title for the file name: letters, digits, spaces, hyphens; everything else becomes "_". */
 export function fileSlug(title: string): string {
   const s = title
     .normalize('NFC')
@@ -39,12 +39,12 @@ export function fileSlug(title: string): string {
     .replace(/^[ _-]+|[ _-]+$/g, '')
     .slice(0, 50)
     .replace(/[ _-]+$/g, '');
-  return s || 'Termin';
+  return s || 'Event';
 }
 
 /**
- * Sicherung gelöschter Termine als .ics-Dateien (per Doppelklick in Apple Kalender wiederherstellbar).
- * Ordner nur für den Nutzer (0700), Dateien nur für den Nutzer (0600).
+ * Backup of deleted events as .ics files (restorable by double-clicking them, which opens Apple Calendar).
+ * Folder accessible only by the user (0700), files only by the user (0600).
  */
 export class BackupStore {
   private readonly now: () => number;
@@ -61,10 +61,10 @@ export class BackupStore {
     return this.o.dir;
   }
 
-  /** Schreibt die Sicherung und liest sie zur Kontrolle zurück. Jeder Fehler bricht ab (der Termin wird dann nicht gelöscht). */
+  /** Writes the backup and reads it back to verify. Any error aborts (the event is then not deleted). */
   async save(title: string, ics: string): Promise<SavedBackup> {
     const fail = () =>
-      new UserError('Die Sicherung des Termins konnte nicht angelegt werden. Der Termin wurde NICHT gelöscht. Bitte prüfen, ob der Ordner ~/Library/Application Support/icloud-mcp beschreibbar ist.');
+      new UserError('Could not create a backup of the event. The event was NOT deleted. Please check that the folder ~/Library/Application Support/icloud-mcp is writable.');
     try {
       await mkdir(this.o.dir, { recursive: true, mode: 0o700 });
       await chmod(this.o.dir, 0o700);
@@ -83,27 +83,27 @@ export class BackupStore {
         const back = await readFile(path, 'utf8');
         if (back !== ics) {
           await rm(path, { force: true });
-          throw new Error('Kontrolle der Sicherung fehlgeschlagen');
+          throw new Error('backup verification failed');
         }
         return { file, path };
       }
-      throw new Error('kein freier Dateiname');
+      throw new Error('no free file name');
     } catch (e) {
       if (e instanceof UserError) throw e;
       throw fail();
     }
   }
 
-  /** Entfernt eine soeben angelegte Sicherung wieder (wenn das Löschen nicht geklappt hat). */
+  /** Removes a backup that was just created (when the delete did not succeed). */
   async discard(saved: SavedBackup): Promise<void> {
     try {
       await rm(saved.path, { force: true });
     } catch {
-      /* unkritisch */
+      /* not critical */
     }
   }
 
-  /** Entfernt Sicherungen, die älter als die Höchstdauer sind, und behält von den übrigen höchstens die neuesten maxFiles. */
+  /** Removes backups older than the maximum age and keeps at most the newest maxFiles of the rest. */
   async prune(): Promise<number> {
     try {
       const names = (await readdir(this.o.dir)).filter((f) => OWN_FILE.test(f));
@@ -113,7 +113,7 @@ export class BackupStore {
           return { f, p, t: (await stat(p)).mtimeMs };
         }),
       );
-      files.sort((a, b) => b.t - a.t || b.f.localeCompare(a.f)); // neueste zuerst
+      files.sort((a, b) => b.t - a.t || b.f.localeCompare(a.f)); // newest first
       const cutoff = this.now() - this.maxAgeMs;
       const doomed = files.filter((x, i) => x.t < cutoff || i >= this.maxFiles);
       for (const x of doomed) await rm(x.p, { force: true });

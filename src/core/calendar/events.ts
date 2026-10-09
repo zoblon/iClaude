@@ -4,7 +4,7 @@ import { isoIn } from '../time.js';
 import { clip } from '../untrusted.js';
 import type { CalendarInfo, EventOccurrence, RawObject } from './types.js';
 
-/** Obergrenze an Schleifendurchläufen je Serie (Schutz vor endlosen Regeln). */
+/** Upper limit of loop iterations per series (protection against endless rules). */
 const MAX_ITERATIONS = 40_000;
 const NOTES_MAX = 2000;
 const TEXT_MAX = 300;
@@ -17,7 +17,7 @@ export interface ExpandOptions {
 
 export interface ExpandResult {
   events: EventOccurrence[];
-  /** true, wenn eine Serie wegen der Obergrenze nicht vollständig durchlaufen wurde. */
+  /** true if a series was not fully iterated because of the limit. */
   truncated: boolean;
 }
 
@@ -26,12 +26,12 @@ function registerTimezones(root: ICAL.Component): void {
     try {
       ICAL.TimezoneService.register(vtz);
     } catch {
-      /* unlesbare Zeitzonendefinition: Fallback über IANA-Namen */
+      /* unreadable time zone definition: fall back to the IANA name */
     }
   }
 }
 
-/** Wandelt eine iCal-Zeit in Millisekunden. Schwebende Zeiten und IANA-Zonen werden über luxon aufgelöst. */
+/** Converts an iCal time to milliseconds. Floating times and IANA zones are resolved via luxon. */
 export function toMs(time: ICAL.Time, tzidHint: string | undefined, zone: string): number {
   if (time.isDate) {
     return DateTime.fromObject({ year: time.year, month: time.month, day: time.day }, { zone }).toMillis();
@@ -56,7 +56,7 @@ function personOf(prop: ICAL.Property | null): string | undefined {
   return v.replace(/^mailto:/i, '') || undefined;
 }
 
-/** Zerlegt eine .ics-Ressource in Vorkommen innerhalb des Zeitraums. */
+/** Splits an .ics resource into occurrences within the range. */
 export function expandObject(obj: RawObject, calendar: CalendarInfo, opts: ExpandOptions): ExpandResult {
   const out: EventOccurrence[] = [];
   let truncated = false;
@@ -96,7 +96,7 @@ export function expandObject(obj: RawObject, calendar: CalendarInfo, opts: Expan
       return undefined;
     }
     const day = (ms: number) => DateTime.fromMillis(ms, { zone: opts.zone }).toISODate() ?? '';
-    // Ganztägig: Ende ist in iCal exklusiv; für Menschen den letzten Tag ausgeben.
+    // All-day: the end is exclusive in iCal; output the last day for humans.
     const endOut = allDay ? day(Math.max(startMs, endMs - 1)) : isoIn(endMs, opts.zone);
     const attendees = item.getAllProperties('attendee');
     const organizer = personOf(item.getFirstProperty('organizer'));
@@ -107,7 +107,7 @@ export function expandObject(obj: RawObject, calendar: CalendarInfo, opts: Expan
       calendar: calendar.name,
       calendarId: calendar.id,
       calendarShared: calendar.shared,
-      title: clip(String(item.getFirstPropertyValue('summary') ?? ''), TEXT_MAX) || '(ohne Titel)',
+      title: clip(String(item.getFirstPropertyValue('summary') ?? ''), TEXT_MAX) || '(no title)',
       location: clip(String(item.getFirstPropertyValue('location') ?? ''), TEXT_MAX),
       notes: clip(String(item.getFirstPropertyValue('description') ?? ''), NOTES_MAX),
       allDay,
@@ -126,7 +126,7 @@ export function expandObject(obj: RawObject, calendar: CalendarInfo, opts: Expan
 
   for (const [uid, { master, exceptions }] of byUid) {
     if (!master) {
-      // Nur Ausnahmen ohne Serie in dieser Ressource: wie Einzeltermine behandeln.
+      // Only exceptions without a series in this resource: treat them like single events.
       for (const ex of exceptions) {
         const ev = new ICAL.Event(ex);
         const tzid = ex.getFirstProperty('dtstart')?.getParameter('tzid') as string | undefined;
@@ -161,7 +161,7 @@ export function expandObject(obj: RawObject, calendar: CalendarInfo, opts: Expan
       const o = make(uid, d.item.component, d.startDate, d.endDate, itemTz ?? tzid, true, isoIn(startMs, opts.zone));
       if (o) out.push(o);
     }
-    // Ausnahmen, deren ursprüngliches Datum außerhalb lag, die aber in den Zeitraum verschoben wurden.
+    // Exceptions whose original date was outside the range but which were moved into it.
     for (const ex of exceptions) {
       const rid = ex.getFirstPropertyValue('recurrence-id');
       if (rid && seen.has(String(rid))) continue;

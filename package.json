@@ -1,8 +1,8 @@
 {
   "name": "icloud-mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
-  "description": "Lokaler MCP-Server für iCloud-Kalender, -Kontakte und -Mail (Desktop Extension)",
+  "description": "Local MCP server for iCloud Calendar, Contacts and Mail (Desktop Extension)",
   "license": "MIT",
   "author": "Tobi Rehkopf",
   "repository": {

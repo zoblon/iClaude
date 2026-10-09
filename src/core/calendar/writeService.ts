@@ -36,20 +36,20 @@ export interface UpdateInput {
   notes?: string | undefined;
   alertsMinutes?: number[] | undefined;
   sharedCalendar?: string | undefined;
-  /** Nur zum klaren Ablehnen: einzelne Vorkommen werden nicht geändert. */
+  /** Only for a clear refusal: single occurrences are not changed. */
   occurrenceStart?: string | undefined;
 }
 
 export interface DeleteInput {
   id: string;
-  /** Titel des Termins; wird gegen den geladenen Termin geprüft. */
+  /** Title of the event; checked against the loaded event. */
   title: string;
-  /** Startzeit des Termins (bei Serien: des ersten Termins); wird gegen den geladenen Termin geprüft. */
+  /** Start time of the event (for series: of the first occurrence); checked against the loaded event. */
   start: string;
   etag?: string | undefined;
-  /** Nur zum klaren Ablehnen: Termine in geteilten Kalendern werden nie gelöscht, auch nicht mit shared_calendar. */
+  /** Only for a clear refusal: events in shared calendars are never deleted, not even with shared_calendar. */
   sharedCalendar?: string | undefined;
-  /** Nur zum klaren Ablehnen: einzelne Vorkommen werden nie gelöscht. */
+  /** Only for a clear refusal: single occurrences are never deleted. */
   occurrenceStart?: string | undefined;
 }
 
@@ -57,7 +57,7 @@ export interface DeleteResult {
   calendar: string;
   deleted: RestorableEvent;
   backup: { file: string; path: string; folder: string };
-  /** Anzahl alter Sicherungen, die dabei aufgeräumt wurden. */
+  /** Number of old backups pruned in the process. */
   prunedBackups: number;
 }
 
@@ -70,20 +70,20 @@ export interface WriteResult {
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Vergleichsform eines ETags: ohne W/ und ohne Anführungszeichen (Clients verlieren diese gelegentlich). */
+/** Comparable form of an ETag: without W/ and without quotes (clients occasionally drop them). */
 export const normEtag = (e: string) => e.trim().replace(/^W\//, '').replace(/^"|"$/g, '');
 
 function parseDay(s: string, zone: string, label: string): DateTime {
   const d = DateTime.fromISO(s.trim().slice(0, 10), { zone });
-  if (!d.isValid) throw new UserError(`${label} "${s}" ist ungültig. Erwartet: JJJJ-MM-TT.`);
+  if (!d.isValid) throw new UserError(`${label} "${s}" is invalid. Expected: YYYY-MM-DD.`);
   return d.startOf('day');
 }
 
 function parseInstant(s: string, zone: string, label: string): DateTime {
   const t = s.trim();
-  if (DATE_ONLY.test(t)) throw new UserError(`${label} "${s}" enthält keine Uhrzeit. Für Termine mit Uhrzeit z. B. 2026-10-20T14:00:00 angeben, für ganztägige Termine all_day=true.`);
+  if (DATE_ONLY.test(t)) throw new UserError(`${label} "${s}" has no time of day. For timed events give e.g. 2026-10-20T14:00:00; for all-day events set all_day=true.`);
   const d = DateTime.fromISO(t, { zone });
-  if (!d.isValid) throw new UserError(`${label} "${s}" ist ungültig. Erwartet: ISO 8601, z. B. 2026-10-20T14:00:00.`);
+  if (!d.isValid) throw new UserError(`${label} "${s}" is invalid. Expected: ISO 8601, e.g. 2026-10-20T14:00:00.`);
   return d;
 }
 
@@ -102,21 +102,21 @@ export class CalendarWriteService {
     const zone = this.cfg.timezone;
     const allDay = a.allDay ?? false;
     const title = a.title.trim();
-    if (!title) throw new UserError('Der Titel darf nicht leer sein. Bitte einen Titel angeben.');
+    if (!title) throw new UserError('The title must not be empty. Please provide a title.');
 
     let start: DateTime;
     let end: DateTime;
     if (allDay) {
       start = parseDay(a.start, zone, 'Start');
-      end = a.end ? parseDay(a.end, zone, 'Ende') : start;
-      if (end < start) throw new UserError('Das Ende darf nicht vor dem Start liegen. Bitte ein gleiches oder späteres Ende angeben.');
+      end = a.end ? parseDay(a.end, zone, 'End') : start;
+      if (end < start) throw new UserError('The end must not be before the start. Please provide the same or a later end.');
     } else {
       start = parseInstant(a.start, zone, 'Start');
-      end = a.end ? parseInstant(a.end, zone, 'Ende') : start.plus({ minutes: DEFAULT_DURATION_MIN });
-      if (end <= start) throw new UserError('Das Ende muss nach dem Start liegen. Bitte ein späteres Ende angeben.');
+      end = a.end ? parseInstant(a.end, zone, 'End') : start.plus({ minutes: DEFAULT_DURATION_MIN });
+      if (end <= start) throw new UserError('The end must be after the start. Please provide a later end.');
     }
 
-    // Rechte zuerst: ohne Freigabe wird weder gebaut noch geschrieben.
+    // Permissions first: without a grant nothing is built or written.
     const calendars = await this.store.listCalendars();
     const grant = authorizeCreate({ calendars, calendar: a.calendar, sharedCalendar: a.sharedCalendar, defaultCalendar: this.cfg.defaultCalendar });
 
@@ -139,12 +139,12 @@ export class CalendarWriteService {
     const zone = this.cfg.timezone;
     const touchesTime = a.start !== undefined || a.end !== undefined || a.allDay !== undefined;
     const touchesAny = touchesTime || a.title !== undefined || a.location !== undefined || a.notes !== undefined || a.alertsMinutes !== undefined;
-    if (!touchesAny) throw new UserError('Keine Änderung angegeben. Bitte mindestens eines von title, start, end, all_day, location, notes oder alerts_minutes_before angeben.');
-    if (a.title !== undefined && !a.title.trim()) throw new UserError('Der Titel darf nicht leer sein. Bitte einen Titel angeben.');
+    if (!touchesAny) throw new UserError('No change specified. Please provide at least one of title, start, end, all_day, location, notes or alerts_minutes_before.');
+    if (a.title !== undefined && !a.title.trim()) throw new UserError('The title must not be empty. Please provide a title.');
 
     const { calendar, url } = await this.locate(a.id);
     const current = await this.store.getObject(calendar, url);
-    if (!current) throw new UserError('Termin nicht gefunden. Er wurde möglicherweise gelöscht oder verschoben.');
+    if (!current) throw new UserError('Event not found. It may have been deleted or moved.');
     const facts = analyzeEvent(current.data);
 
     const grant = authorizeUpdate({
@@ -156,9 +156,9 @@ export class CalendarWriteService {
       touchesTime,
     });
 
-    if (!current.etag) throw new UserError('Der Server liefert keinen ETag zu diesem Termin, daher wird aus Sicherheitsgründen nicht geschrieben. Bitte später erneut versuchen oder den Termin in Apple Kalender ändern.');
+    if (!current.etag) throw new UserError('The server returns no ETag for this event, so nothing is written for safety reasons. Please try again later or change the event in Apple Calendar.');
     if (a.etag && normEtag(a.etag) !== normEtag(current.etag)) {
-      throw new UserError('Der Termin wurde seit dem Abruf geändert. Bitte den Termin neu laden (list_events) und die Änderung erneut vornehmen.');
+      throw new UserError('The event has changed since it was fetched. Please reload the event (list_events) and make the change again.');
     }
 
     let time: { start: DateTime; end: DateTime; allDay: boolean } | undefined;
@@ -185,34 +185,34 @@ export class CalendarWriteService {
     return { event: this.firstView(saved, calendar, t.startMs, t.endMs), calendar: calendar.name, shared: calendar.shared, changed };
   }
 
-  /** Kalender und Adresse des Termins aus der ID (nur Pfade innerhalb bekannter Kalender). */
+  /** Calendar and URL of the event from the ID (only paths inside known calendars). */
   private async locate(id: string): Promise<{ calendar: CalendarInfo; url: string }> {
     if (!/^\/[^?#\s]*\.ics$/.test(id) || id.includes('..')) {
-      throw new UserError('Ungültige Termin-ID. Die ID aus list_events oder search_events unverändert verwenden.');
+      throw new UserError('Invalid event ID. Use the ID from list_events or search_events unchanged.');
     }
     const calendars = await this.store.listCalendars();
     const parent = id.slice(0, id.lastIndexOf('/') + 1);
     const calendar = calendars.find((c) => (c.id.endsWith('/') ? c.id : `${c.id}/`) === parent);
-    if (!calendar) throw new UserError('Die Termin-ID gehört zu keinem bekannten Kalender. Bitte die ID mit list_events oder search_events neu abrufen.');
+    if (!calendar) throw new UserError('The event ID does not belong to any known calendar. Please fetch the ID again with list_events or search_events.');
     return { calendar, url: new URL(id, calendar.url).href };
   }
 
   /**
-   * Löscht einen eigenen Termin. Reihenfolge:
-   *  1. Rechte (kein geteilter Kalender, keine Teilnehmer, kein fremder Organisator, nur ganze Serien),
-   *  2. Titel und Startzeit gegen den per GET geladenen Termin prüfen,
-   *  3. Sicherung als .ics anlegen (schlägt sie fehl, wird nicht gelöscht),
-   *  4. DELETE mit If-Match auf den ETag,
-   *  5. alte Sicherungen aufräumen.
+   * Deletes one of the user's own events. Order:
+   *  1. permissions (no shared calendar, no attendees, no foreign organizer, whole series only),
+   *  2. check title and start time against the event loaded via GET,
+   *  3. create the .ics backup (if it fails, nothing is deleted),
+   *  4. DELETE with If-Match on the ETag,
+   *  5. prune old backups.
    */
   async deleteEvent(a: DeleteInput): Promise<DeleteResult> {
     const zone = this.cfg.timezone;
-    if (!this.backup) throw new UserError('Löschen ist nicht eingerichtet (kein Sicherungsordner). Es wurde nichts gelöscht.');
-    if (!a.title.trim()) throw new UserError('Der Titel darf nicht leer sein. Bitte den Titel des Termins angeben, wie er angezeigt wird.');
+    if (!this.backup) throw new UserError('Deleting is not set up (no backup folder). Nothing was deleted.');
+    if (!a.title.trim()) throw new UserError('The title must not be empty. Please provide the title of the event as it is displayed.');
 
     const { calendar, url } = await this.locate(a.id);
     const current = await this.store.getObject(calendar, url);
-    if (!current) throw new UserError('Termin nicht gefunden. Er wurde möglicherweise schon gelöscht oder verschoben.');
+    if (!current) throw new UserError('Event not found. It may already have been deleted or moved.');
     const facts = analyzeEvent(current.data);
 
     const grant = authorizeDelete({
@@ -223,23 +223,23 @@ export class CalendarWriteService {
       occurrenceStart: a.occurrenceStart,
     });
 
-    if (!current.etag) throw new UserError('Der Server liefert keinen ETag zu diesem Termin, daher wird aus Sicherheitsgründen nicht gelöscht. Bitte später erneut versuchen oder den Termin in Apple Kalender löschen.');
+    if (!current.etag) throw new UserError('The server returns no ETag for this event, so nothing is deleted for safety reasons. Please try again later or delete the event in Apple Calendar.');
     if (a.etag && normEtag(a.etag) !== normEtag(current.etag)) {
-      throw new UserError('Der Termin wurde seit dem Abruf geändert. Es wurde nichts gelöscht. Bitte den Termin neu laden (list_events) und das Löschen erneut anfordern.');
+      throw new UserError('The event has changed since it was fetched. Nothing was deleted. Please reload the event (list_events) and request the deletion again.');
     }
 
-    // Titel und Startzeit müssen zum geladenen Termin passen, damit der Freigabedialog lesbare, zutreffende Angaben zeigt.
+    // Title and start time must match the loaded event so that the approval dialog shows readable, accurate details.
     const restore = describeEvent(current.data, zone);
     const cur = currentTimes(current.data, zone);
     if (!sameText(a.title, restore.title)) {
-      throw new UserError('Der Titel passt nicht zum Termin mit dieser ID. Es wurde nichts gelöscht. Den Termin mit list_events oder search_events neu abrufen und Titel und Startzeit unverändert übernehmen.');
+      throw new UserError('The title does not match the event with this ID. Nothing was deleted. Fetch the event again with list_events or search_events and copy title and start time unchanged.');
     }
     if (!this.startMatches(a.start, cur, zone)) {
-      const hint = facts.recurring ? ' Bei einer Terminserie ist der Start der des ERSTEN Termins der Serie' : '';
-      throw new UserError(`Die Startzeit passt nicht zum Termin mit dieser ID (Start laut Kalender: ${restore.start}).${hint} Es wurde nichts gelöscht.`);
+      const hint = facts.recurring ? ' For a recurring series, the start is that of the FIRST occurrence of the series.' : '';
+      throw new UserError(`The start time does not match the event with this ID (start according to the calendar: ${restore.start}).${hint} Nothing was deleted.`);
     }
 
-    // Erst sichern, dann löschen. Schlägt die Sicherung fehl, wird nicht gelöscht.
+    // Back up first, then delete. If the backup fails, nothing is deleted.
     const saved = await this.backup.save(restore.title, current.data);
     try {
       await this.store.deleteObject(grant, { url, etag: current.etag });
@@ -251,19 +251,19 @@ export class CalendarWriteService {
     return { calendar: calendar.name, deleted: restore, backup: { file: saved.file, path: saved.path, folder: this.backup.dir }, prunedBackups };
   }
 
-  /** Gleicher Beginn: bei ganztägig derselbe Tag, sonst dieselbe Minute. */
+  /** Same start: for all-day the same day, otherwise the same minute. */
   private startMatches(expected: string, cur: { startMs: number; allDay: boolean }, zone: string): boolean {
     const s = expected.trim();
     if (cur.allDay) {
       const day = DateTime.fromISO(s.slice(0, 10), { zone });
-      if (!DATE_ONLY.test(s.slice(0, 10)) || !day.isValid) throw new UserError(`Start "${clip(s, 40)}" ist ungültig. Für diesen ganztägigen Termin das Datum JJJJ-MM-TT angeben.`);
+      if (!DATE_ONLY.test(s.slice(0, 10)) || !day.isValid) throw new UserError(`Start "${clip(s, 40)}" is invalid. For this all-day event give the date as YYYY-MM-DD.`);
       return day.toISODate() === DateTime.fromMillis(cur.startMs, { zone }).toISODate();
     }
     const dt = parseInstant(s, zone, 'Start');
     return Math.floor(dt.toMillis() / 60_000) === Math.floor(cur.startMs / 60_000);
   }
 
-  /** Neue Zeiten aus Angaben und bisherigen Zeiten. Nur Start angegeben: Dauer bleibt. */
+  /** New times from the input and the existing times. Only start given: the duration is kept. */
   private resolveTime(a: UpdateInput, cur: { startMs: number; endMs: number; allDay: boolean }, zone: string) {
     const allDay = a.allDay ?? cur.allDay;
     const curStart = DateTime.fromMillis(cur.startMs, { zone });
@@ -271,21 +271,21 @@ export class CalendarWriteService {
     if (allDay) {
       const days = cur.allDay ? Math.max(1, Math.round((cur.endMs - cur.startMs) / DAY_MS)) : 1;
       const start = a.start ? parseDay(a.start, zone, 'Start') : curStart.startOf('day');
-      const end = a.end ? parseDay(a.end, zone, 'Ende') : start.plus({ days: days - 1 });
-      if (end < start) throw new UserError('Das Ende darf nicht vor dem Start liegen. Bitte ein gleiches oder späteres Ende angeben.');
+      const end = a.end ? parseDay(a.end, zone, 'End') : start.plus({ days: days - 1 });
+      if (end < start) throw new UserError('The end must not be before the start. Please provide the same or a later end.');
       return { start, end, allDay: true };
     }
-    if (cur.allDay && !a.start) throw new UserError('Beim Wechsel von ganztägig zu einem Termin mit Uhrzeit bitte start mit Datum und Uhrzeit angeben.');
+    if (cur.allDay && !a.start) throw new UserError('When switching from all-day to a timed event, please provide start with date and time.');
     const start = a.start ? parseInstant(a.start, zone, 'Start') : curStart;
-    const end = a.end ? parseInstant(a.end, zone, 'Ende') : cur.allDay ? start.plus({ minutes: DEFAULT_DURATION_MIN }) : a.start ? start.plus({ milliseconds: cur.endMs - cur.startMs }) : curEnd;
-    if (end <= start) throw new UserError('Das Ende muss nach dem Start liegen. Bitte ein späteres Ende angeben.');
+    const end = a.end ? parseInstant(a.end, zone, 'End') : cur.allDay ? start.plus({ minutes: DEFAULT_DURATION_MIN }) : a.start ? start.plus({ milliseconds: cur.endMs - cur.startMs }) : curEnd;
+    if (end <= start) throw new UserError('The end must be after the start. Please provide a later end.');
     return { start, end, allDay: false };
   }
 
   private firstView(obj: RawObject, calendar: CalendarInfo, startMs: number, endMs: number): EventView {
     const r = expandObject(obj, calendar, { zone: this.cfg.timezone, rangeStartMs: startMs, rangeEndMs: Math.max(endMs, startMs + 1) });
     const first = r.events[0];
-    if (!first) throw new UserError('Der Termin wurde gespeichert, konnte aber nicht erneut gelesen werden. Bitte mit list_events prüfen.');
+    if (!first) throw new UserError('The event was saved but could not be read back. Please check with list_events.');
     return toView(first);
   }
 }

@@ -22,21 +22,21 @@ const ADDRESS = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@(?:[A-Za-z0-9](?:[A-Za-z
 const CONTROL = /[\u0000-\u001F\u007F\u2028\u2029]/;
 const NON_ASCII = /[^\x20-\x7E]/;
 
-/** "a@b.de" oder "Name <a@b.de>" (auch "Name" <a@b.de>). Unzulässiges wird abgelehnt, nie "repariert". */
+/** "a@b.com" or "Name <a@b.com>" (also "Name" <a@b.com>). Invalid input is rejected, never "repaired". */
 export function parseMailbox(input: string): Mailbox {
   const s = input.trim();
-  if (CONTROL.test(s)) throw new UserError('Ungültige Mailadresse: Steuerzeichen sind nicht erlaubt. Bitte nur eine Adresse pro Eintrag angeben.');
+  if (CONTROL.test(s)) throw new UserError('Invalid email address: control characters are not allowed. Please give only one address per entry.');
   const m = /^(?:(.*?)\s*)?<([^<>]+)>$/.exec(s);
   const address = (m ? m[2]! : s).trim();
   const name = (m?.[1] ?? '').trim().replace(/^"(.*)"$/s, '$1').replace(/\\(.)/g, '$1');
   if (!ADDRESS.test(address)) {
-    throw new UserError(`Ungültige Mailadresse "${s.slice(0, 80)}". Erwartet: name@beispiel.de oder Name <name@beispiel.de>.`);
+    throw new UserError(`Invalid email address "${s.slice(0, 80)}". Expected: name@example.com or Name <name@example.com>.`);
   }
-  if (name.length > 100) throw new UserError('Der Anzeigename ist zu lang (höchstens 100 Zeichen).');
+  if (name.length > 100) throw new UserError('The display name is too long (max. 100 characters).');
   return { ...(name ? { name } : {}), address };
 }
 
-/** RFC 2047: Text mit Nicht-ASCII-Zeichen als kodierte Wörter, an Zeichengrenzen getrennt. */
+/** RFC 2047: text with non-ASCII characters as encoded words, split at character boundaries. */
 export function encodeText(text: string): string {
   const clean = text.replace(/[\r\n\t]+/g, ' ');
   if (!NON_ASCII.test(clean)) return clean;
@@ -47,7 +47,7 @@ export function encodeText(text: string): string {
     current = '';
   };
   for (const ch of Array.from(clean)) {
-    // höchstens 42 Byte Rohtext je Wort, damit das kodierte Wort unter 75 Zeichen bleibt
+    // at most 42 bytes of raw text per word, so the encoded word stays under 75 characters
     if (Buffer.byteLength(current + ch, 'utf8') > 42) flush();
     current += ch;
   }
@@ -68,9 +68,9 @@ const idList = (ids: string[]) => ids.map((i) => `<${i.replace(/^<|>$/g, '')}>`)
 
 const wrap76 = (b64: string) => b64.replace(/.{1,76}/g, '$&\r\n').replace(/\r\n$/, '');
 
-/** Baut eine einfache Textnachricht (UTF-8, Base64). Es gibt bewusst weder Bcc noch Anhänge. */
+/** Builds a simple plain-text message (UTF-8, Base64). Deliberately no Bcc and no attachments. */
 export function buildDraft(m: DraftMessage, domain: string): { raw: Buffer; messageId: string } {
-  if (!m.to.length && !m.cc.length) throw new UserError('Bitte mindestens einen Empfänger angeben (to oder cc).');
+  if (!m.to.length && !m.cc.length) throw new UserError('Please specify at least one recipient (to or cc).');
   const messageId = `${randomUUID()}@${domain}`;
   const body = m.body.replace(/\r\n?|\n/g, '\r\n');
   const headers = [
@@ -87,8 +87,8 @@ export function buildDraft(m: DraftMessage, domain: string): { raw: Buffer; mess
     'Content-Transfer-Encoding: base64',
   ];
   for (const h of headers) {
-    // Jede Kopfzeile darf nur aus ihr selbst und eingerückten Fortsetzungen (CRLF + Leerzeichen) bestehen.
-    if (/[\r\n]/.test(h.replace(/\r\n[ \t]/g, ' '))) throw new UserError('Interner Schutz: ungültige Kopfzeile. Es wurde nichts geschrieben.');
+    // Each header may consist only of itself and indented continuation lines (CRLF + whitespace).
+    if (/[\r\n]/.test(h.replace(/\r\n[ \t]/g, ' '))) throw new UserError('Internal safeguard: invalid header. Nothing was written.');
   }
   const raw = `${headers.join('\r\n')}\r\n\r\n${wrap76(Buffer.from(body, 'utf8').toString('base64'))}\r\n`;
   return { raw: Buffer.from(raw, 'utf8'), messageId };

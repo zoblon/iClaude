@@ -1,18 +1,18 @@
 import type { WriteGrant } from '../permissions.js';
 
 export interface CalendarInfo {
-  /** Stabile ID (Pfad des Kalenders auf dem Server). */
+  /** Stable ID (path of the calendar on the server). */
   id: string;
   name: string;
-  /** events = Termine, tasks = Erinnerungen/Aufgaben (nicht unterstützt). */
+  /** events = events, tasks = reminders/tasks (not supported). */
   kind: 'events' | 'tasks' | 'other';
-  /** Mit anderen Personen geteilt (Einträge erscheinen bei diesen sofort). */
+  /** Shared with other people (entries appear for them immediately). */
   shared: boolean;
-  /** Woran die Freigabe erkannt wurde (nur für Diagnose). */
+  /** How the sharing was detected (diagnostics only). */
   sharedReason?: string;
-  /** Abonnierter, schreibgeschützter Kalender. */
+  /** Subscribed, read-only calendar. */
   subscribed: boolean;
-  /** Nach Serverrechten beschreibbar. */
+  /** Writable according to server privileges. */
   writable: boolean;
   url: string;
 }
@@ -24,7 +24,7 @@ export interface RawObject {
 }
 
 export interface EventOccurrence {
-  /** Pfad der .ics-Ressource; identifiziert den Termin (bzw. die Serie). */
+  /** Path of the .ics resource; identifies the event (or the series). */
   id: string;
   uid: string;
   etag?: string;
@@ -35,24 +35,24 @@ export interface EventOccurrence {
   location: string;
   notes: string;
   allDay: boolean;
-  /** ISO-Zeit in Nutzer-Zeitzone, bei ganztägigen Terminen nur das Datum. */
+  /** ISO time in the user's time zone; for all-day events only the date. */
   start: string;
   end: string;
   startMs: number;
   endMs: number;
   recurring: boolean;
-  /** Bei Serien: Beginn dieses Vorkommens (zur Unterscheidung). */
+  /** For series: start of this occurrence (to tell them apart). */
   occurrenceStart?: string;
   status?: string;
-  /** Zeigt "frei" an (TRANSP:TRANSPARENT). */
+  /** Shows as "free" (TRANSP:TRANSPARENT). */
   free: boolean;
   hasAttendees: boolean;
   organizer?: string;
-  /** Derselbe Termin (gleiche UID und gleiches Vorkommen) in weiteren Kalendern. */
+  /** The same event (same UID and same occurrence) in other calendars. */
   alsoIn?: EventOccurrence[];
 }
 
-/** Lesender Zugriff auf Kalender (austauschbar, z. B. für Tests oder einen gehosteten Konnektor). */
+/** Read access to calendars (replaceable, e.g. for tests or a hosted connector). */
 export interface CalendarReader {
   listCalendars(force?: boolean): Promise<CalendarInfo[]>;
   fetchObjects(calendar: CalendarInfo, startIso: string, endIso: string): Promise<{ objects: RawObject[]; truncated: boolean }>;
@@ -60,12 +60,12 @@ export interface CalendarReader {
 }
 
 /**
- * Schreibender Zugriff: Anlegen, Ändern und Löschen eines einzelnen Termins.
- * Alle Methoden verlangen ein WriteGrant aus permissions.ts (Löschen nur mit dem Grant 'delete').
+ * Write access: creating, changing and deleting a single event.
+ * All methods require a WriteGrant from permissions.ts (deleting only with the 'delete' grant).
  */
 export interface CalendarStore extends CalendarReader {
   createObject(grant: WriteGrant, filename: string, ics: string): Promise<RawObject>;
   updateObject(grant: WriteGrant, obj: RawObject & { etag: string }): Promise<RawObject>;
-  /** Löscht genau diesen Termin, sofern der ETag noch passt (If-Match). */
+  /** Deletes exactly this event, provided the ETag still matches (If-Match). */
   deleteObject(grant: WriteGrant, obj: { url: string; etag: string }): Promise<void>;
 }

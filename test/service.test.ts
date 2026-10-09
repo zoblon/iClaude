@@ -20,57 +20,57 @@ function reader(perCalendar: Record<string, string[]>): CalendarReader {
 }
 const range = { start: '2026-10-01', end: '2026-11-01' };
 
-describe('Zusammenführen gleicher Termine aus mehreren Kalendern', () => {
-  it('führt gleiche UID im selben Vorkommen zu einem Eintrag zusammen und nennt alle Kalender', async () => {
-    const svc = new CalendarService(cfg, reader({ Termine: [vevent('U1', 'Elternabend')], Gemeinsam: [vevent('U1', 'Elternabend')] }));
+describe('Merging identical events from several calendars', () => {
+  it('merges the same UID in the same occurrence into one entry and lists all calendars', async () => {
+    const svc = new CalendarService(cfg, reader({ Events: [vevent('U1', 'Parents evening')], Shared: [vevent('U1', 'Parents evening')] }));
     const r = await svc.listEvents(range);
     expect(r.events).toHaveLength(1);
     expect(r.total).toBe(1);
-    expect(r.events[0]!.calendars.sort()).toEqual(['Gemeinsam', 'Termine']);
+    expect(r.events[0]!.calendars.sort()).toEqual(['Events', 'Shared']);
     expect(r.events[0]!.sources).toHaveLength(2);
     expect(r.events[0]!.sharedCalendar).toBe(true);
   });
 
-  it('wählt als Haupteintrag den nicht geteilten Kalender, egal in welcher Reihenfolge', async () => {
-    // "Gemeinsam" (geteilt) steht in calendars vor/nach "Termine" - die ID gehört immer zum privaten Kalender
-    const svc = new CalendarService(cfg, reader({ Gemeinsam: [vevent('U1', 'Elternabend')], Termine: [vevent('U1', 'Elternabend')] }));
+  it('picks the non-shared calendar as the main entry, regardless of order', async () => {
+    // "Shared" (shared) comes before/after "Events" in calendars - the ID always belongs to the private calendar
+    const svc = new CalendarService(cfg, reader({ Shared: [vevent('U1', 'Parents evening')], Events: [vevent('U1', 'Parents evening')] }));
     const [e] = (await svc.listEvents(range)).events;
-    expect(e!.id).toContain('/termine/');
+    expect(e!.id).toContain('/events/');
   });
 
-  it('führt Serien je Vorkommen zusammen', async () => {
+  it('merges series per occurrence', async () => {
     const series = vevent('S1', 'Training', 'RRULE:FREQ=WEEKLY;COUNT=3\r\n');
-    const svc = new CalendarService(cfg, reader({ Termine: [series], Gemeinsam: [series] }));
+    const svc = new CalendarService(cfg, reader({ Events: [series], Shared: [series] }));
     const r = await svc.listEvents({ start: '2026-10-01', end: '2026-11-30' });
     expect(r.events).toHaveLength(3);
     expect(r.events.every((e) => e.calendars.length === 2)).toBe(true);
   });
 
-  it('lässt verschiedene UIDs und verschiedene Vorkommen getrennt', async () => {
-    const a = vevent('A', 'Eins');
-    const b = vevent('B', 'Zwei');
-    const svc = new CalendarService(cfg, reader({ Termine: [a, b], Gemeinsam: [a] }));
+  it('keeps different UIDs and different occurrences separate', async () => {
+    const a = vevent('A', 'One');
+    const b = vevent('B', 'Two');
+    const svc = new CalendarService(cfg, reader({ Events: [a, b], Shared: [a] }));
     const r = await svc.listEvents(range);
-    expect(r.events.map((e) => `${e.title}:${e.calendars.length}`).sort()).toEqual(['Eins:2', 'Zwei:1']);
+    expect(r.events.map((e) => `${e.title}:${e.calendars.length}`).sort()).toEqual(['One:2', 'Two:1']);
   });
 
-  it('wirkt auch in der Suche', async () => {
-    const svc = new CalendarService(cfg, reader({ Termine: [vevent('U1', 'Elternabend')], Gemeinsam: [vevent('U1', 'Elternabend')] }));
-    const r = await svc.searchEvents({ query: 'eltern', ...range });
+  it('also applies to search', async () => {
+    const svc = new CalendarService(cfg, reader({ Events: [vevent('U1', 'Parents evening')], Shared: [vevent('U1', 'Parents evening')] }));
+    const r = await svc.searchEvents({ query: 'parents', ...range });
     expect(r.events).toHaveLength(1);
     expect(r.events[0]!.calendars).toHaveLength(2);
   });
 });
 
-describe('hasUnknownTzid (Absicherung, weil iCloud bei eingeschränkten Abfragen keine Zeitzonendefinition liefert)', () => {
+describe('hasUnknownTzid (safeguard, because iCloud returns no time zone definition for restricted queries)', () => {
   it.each([
     ['DTSTART;TZID=Europe/Berlin:20261021T100000', false],
     ['DTSTART;TZID=America/New_York:20261021T100000', false],
     ['DTSTART:20261021T100000Z', false],
     ['DTSTART;TZID=W. Europe Standard Time:20261021T100000', true],
     ['DTSTART;TZID=Central European Standard Time:20261021T100000', true],
-    ['DTSTART;TZID=Nirgendwo/Fantasie:20261021T100000', true],
-  ])('%s -> unbekannt=%s', (line, expected) => {
+    ['DTSTART;TZID=Nowhere/Fantasy:20261021T100000', true],
+  ])('%s -> unknown=%s', (line, expected) => {
     expect(hasUnknownTzid(`BEGIN:VEVENT\r\n${line}\r\nEND:VEVENT`)).toBe(expected);
   });
 });

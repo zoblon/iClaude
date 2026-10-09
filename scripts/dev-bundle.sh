@@ -1,6 +1,6 @@
 #!/bin/sh
-# Startet das GEBÜNDELTE Paket (build/stage/server/index.mjs) wie Claude Desktop es tut, mit Werten aus .env.
-# Hinweis: Die Claude-App nicht im Node-Modus starten (ELECTRON_RUN_AS_NODE ist gesperrt, das würde eine zweite App-Instanz starten).
+# Starts the BUNDLED package (build/stage/server/index.mjs) the way Claude Desktop does, with values from .env.
+# Note: do not start the Claude app in Node mode (ELECTRON_RUN_AS_NODE is blocked; it would start a second app instance).
 cd "$(dirname "$0")/.." || exit 1
 set -a
 . ./.env

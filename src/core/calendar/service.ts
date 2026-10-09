@@ -9,14 +9,14 @@ import type { CalendarInfo, CalendarReader, EventOccurrence } from './types.js';
 const MAX_RANGE_DAYS = 366;
 const MAX_LIMIT = 200;
 
-/** Ausgabeform eines Termins (ohne interne Felder). */
+/** Output form of an event (without internal fields). */
 export interface EventView {
   id: string;
   etag?: string;
-  /** Alle Kalender, in denen dieser Termin liegt (meist einer). */
+  /** All calendars containing this event (usually one). */
   calendars: string[];
   sharedCalendar?: true;
-  /** Nur wenn der Termin in mehreren Kalendern liegt: ID und ETag je Kalender. */
+  /** Only if the event is in several calendars: ID and ETag per calendar. */
   sources?: Array<{ calendar: string; id: string; etag?: string }>;
   title: string;
   start: string;
@@ -57,8 +57,8 @@ export function toView(e: EventOccurrence): EventView {
 }
 
 /**
- * Führt Termine mit gleicher UID und gleichem Vorkommen (RECURRENCE-ID) aus mehreren Kalendern zusammen.
- * Der Haupteintrag liegt bevorzugt in einem nicht geteilten Kalender; die übrigen stehen in `alsoIn`.
+ * Merges events with the same UID and the same occurrence (RECURRENCE-ID) from several calendars.
+ * The main entry is preferably in a non-shared calendar; the others are listed in `alsoIn`.
  */
 export function mergeAcrossCalendars(list: EventOccurrence[]): EventOccurrence[] {
   const out: EventOccurrence[] = [];
@@ -75,13 +75,13 @@ export function mergeAcrossCalendars(list: EventOccurrence[]): EventOccurrence[]
       out.push(e);
       continue;
     }
-    // Gleicher Kalender mit gleicher Ressource kann nicht doppelt vorkommen; hier sind es andere Kalender.
+    // The same calendar cannot contain the same resource twice; merging is only for other calendars.
     if (first.calendarId === e.calendarId) {
       out.push(e);
       continue;
     }
     if (first.calendarShared && !e.calendarShared) {
-      // Bevorzugt den nicht geteilten Kalender als Haupteintrag
+      // Prefer the non-shared calendar as the main entry
       const idx = out.indexOf(first);
       const merged: EventOccurrence = { ...e, alsoIn: [first, ...(first.alsoIn ?? [])] };
       out[idx] = merged;
@@ -107,7 +107,7 @@ export class CalendarService {
     return this.dav.listCalendars();
   }
 
-  /** Wählt Kalender nach Name oder ID; ohne Angabe alle Termin-Kalender. */
+  /** Selects calendars by name or ID; without input, all event calendars. */
   async resolve(refs?: string[]): Promise<CalendarInfo[]> {
     const all = (await this.dav.listCalendars()).filter((c) => c.kind === 'events');
     if (!refs || refs.length === 0) return all;
@@ -116,9 +116,9 @@ export class CalendarService {
       const r = ref.trim().toLowerCase();
       const hits = all.filter((c) => c.name.toLowerCase() === r || c.id === ref.trim());
       if (hits.length === 0) {
-        throw new UserError(`Kalender "${ref}" nicht gefunden. Verfügbar: ${all.map((c) => `"${c.name}"`).join(', ')}.`);
+        throw new UserError(`Calendar "${ref}" not found. Available: ${all.map((c) => `"${c.name}"`).join(', ')}.`);
       }
-      if (hits.length > 1) throw new UserError(`Der Name "${ref}" ist mehrdeutig. Bitte die ID verwenden (list_calendars).`);
+      if (hits.length > 1) throw new UserError(`The name "${ref}" is ambiguous. Please use the ID (list_calendars).`);
       picked.push(hits[0]!);
     }
     return [...new Set(picked)];
@@ -160,10 +160,10 @@ export class CalendarService {
 
   async searchEvents(a: { query: string; start?: string; end?: string; calendars?: string[]; limit?: number }) {
     const q = a.query.trim().toLowerCase();
-    if (!q) throw new UserError('Der Suchbegriff darf nicht leer sein. Bitte einen Suchbegriff angeben.');
+    if (!q) throw new UserError('The search term must not be empty. Please provide a search term.');
     const now = DateTime.now().setZone(this.cfg.timezone);
     const start = a.start ? parseWhen(a.start, this.cfg.timezone, 'start', 'Start') : now.minus({ days: 30 }).startOf('day');
-    const end = a.end ? parseWhen(a.end, this.cfg.timezone, 'end', 'Ende') : start.plus({ days: 210 });
+    const end = a.end ? parseWhen(a.end, this.cfg.timezone, 'end', 'End') : start.plus({ days: 210 });
     const range = parseRange(start.toISO()!, end.toISO()!, this.cfg.timezone, MAX_RANGE_DAYS);
     const cals = await this.resolve(a.calendars);
     const { events, truncated } = await this.load(cals, range.start, range.end);

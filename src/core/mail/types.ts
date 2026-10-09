@@ -6,12 +6,12 @@ export interface Address {
 }
 
 export interface MailboxInfo {
-  /** Voller Pfad auf dem Server, z. B. "INBOX" oder "Sent Messages". */
+  /** Full path on the server, e.g. "INBOX" or "Sent Messages". */
   path: string;
   name: string;
-  /** inbox, sent, drafts, archive, junk, trash oder leer. */
+  /** inbox, sent, drafts, archive, junk, trash or empty. */
   role?: string;
-  /** Woher die Rolle stammt: Merkmal der Serverliste (\\Trash, \\Drafts, …) oder nur der Ordnername. Der Papierkorb gilt nur mit Merkmal. */
+  /** Where the role comes from: attribute in the server's LIST response (\\Trash, \\Drafts, …) or just the folder name. The Trash only counts with the attribute. */
   roleBy?: 'flag' | 'name';
   messages?: number;
   unseen?: number;
@@ -24,19 +24,19 @@ export interface MessageRef {
 }
 
 export interface MessageSummary {
-  /** Referenz auf die Nachricht (für get_message / get_thread). */
+  /** Reference to the message (for get_message / get_thread). */
   id: string;
   mailbox: string;
   subject: string;
   from: Address[];
   to: Address[];
   cc: Address[];
-  /** ISO-Zeit; leer, wenn unbekannt. */
+  /** ISO time; empty if unknown. */
   date: string;
   unread: boolean;
   flagged: boolean;
   answered: boolean;
-  /** Entwurf (Flag \\Draft). */
+  /** Draft (flag \\Draft). */
   draft?: true;
   hasAttachments: boolean;
   size?: number;
@@ -49,37 +49,37 @@ export interface SearchCriteria {
   from?: string | undefined;
   to?: string | undefined;
   subject?: string | undefined;
-  /** Volltext (Kopfzeilen und Inhalt). */
+  /** Full text (headers and body). */
   text?: string | undefined;
-  /** Von (einschließlich). */
+  /** From (inclusive). */
   since?: Date | undefined;
-  /** Vor (ausschließlich). */
+  /** Before (exclusive). */
   before?: Date | undefined;
   unreadOnly?: boolean | undefined;
 }
 
-/** Lesender Zugriff auf Mail (austauschbar). Es gibt bewusst keine Methode, die etwas verändert. */
+/** Read access to mail (replaceable). Deliberately has no method that changes anything. */
 export interface MailReader {
   listMailboxes(): Promise<MailboxInfo[]>;
   listRecent(path: string, count: number): Promise<MessageSummary[]>;
   search(path: string, criteria: SearchCriteria, caps: { limit: number; localPass: number }): Promise<{ total: number; messages: MessageSummary[] }>;
-  /** Vollständige Nachricht (Rohtext) samt Zustand. Markiert nichts als gelesen. */
+  /** Full message (raw source) including its state. Marks nothing as read. */
   fetchSource(ref: MessageRef): Promise<{ source: Buffer; summary: MessageSummary; truncated: boolean }>;
-  /** Nachrichten eines Ordners, die zu einer der Message-IDs gehören (Message-ID, In-Reply-To oder References). */
+  /** Messages in a folder that belong to one of the Message-IDs (Message-ID, In-Reply-To or References). */
   findRelated(path: string, messageIds: string[], limit: number): Promise<MessageSummary[]>;
 }
 
-/** Ablegen von Entwürfen. Das ist die einzige schreibende Mail-Operation; sie verlangt eine DraftGrant aus permissions.ts. */
+/** Draft storage. This is the only mail operation that writes; it requires a DraftGrant from permissions.ts. */
 export interface DraftStore {
   appendDraft(grant: DraftGrant, raw: Buffer): Promise<{ mailbox: string; id?: string }>;
 }
 
 /**
- * In den Papierkorb verschieben (IMAP MOVE). Verlangt eine TrashGrant aus permissions.ts.
- * Es gibt bewusst nichts zum endgültigen Löschen: kein \\Deleted, kein EXPUNGE.
+ * Moving to the Trash (IMAP MOVE). Requires a TrashGrant from permissions.ts.
+ * Deliberately has nothing for permanent deletion: no \\Deleted, no EXPUNGE.
  */
 export interface MailTrasher {
-  /** Zusammenfassungen zu den Nachrichten (in der Reihenfolge der Referenzen, undefined = nicht gefunden). Liest schreibgeschützt. */
+  /** Summaries of the messages (in the order of the refs, undefined = not found). Reads read-only. */
   summaries(refs: MessageRef[]): Promise<Array<MessageSummary | undefined>>;
   moveToTrash(grant: TrashGrant, refs: MessageRef[]): Promise<{ trash: string; moved: number }>;
 }

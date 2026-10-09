@@ -13,6 +13,7 @@ const LOCAL_PASS = 300;
 const THREAD_ROUNDS = 3;
 const THREAD_MAX_MESSAGES = 30;
 
+/** Role aliases, including common German folder names (Posteingang, Gesendet, Entwürfe, Archiv, Papierkorb). */
 const ALIASES: Record<string, string> = {
   inbox: 'inbox', posteingang: 'inbox',
   sent: 'sent', gesendet: 'sent',
@@ -27,12 +28,12 @@ export interface SearchInput {
   to?: string | undefined;
   subject?: string | undefined;
   text?: string | undefined;
-  /** Datum JJJJ-MM-TT, einschließlich. */
+  /** Date YYYY-MM-DD, inclusive. */
   since?: string | undefined;
-  /** Datum JJJJ-MM-TT, einschließlich. */
+  /** Date YYYY-MM-DD, inclusive. */
   until?: string | undefined;
   unreadOnly?: boolean | undefined;
-  /** Ordner; ohne Angabe: alle Ordner außer Spam und Papierkorb. */
+  /** Folder; if omitted: all folders except junk and Trash. */
   mailbox?: string | undefined;
   includeJunkAndTrash?: boolean | undefined;
   limit?: number | undefined;
@@ -74,7 +75,7 @@ export class MailService {
     return list;
   }
 
-  /** Ordner nach Pfad, Name oder Rolle ("inbox", "sent", "drafts", "archive", "junk", "trash"). */
+  /** Folder by path, name or role ("inbox", "sent", "drafts", "archive", "junk", "trash"). */
   async resolveMailbox(ref: string | undefined): Promise<MailboxInfo> {
     const list = await this.mailboxes();
     const want = (ref ?? 'INBOX').trim();
@@ -85,7 +86,7 @@ export class MailService {
       list.find((m) => m.name.toLowerCase() === lc) ??
       (role ? list.find((m) => m.role === role) : undefined);
     if (!hit) {
-      throw new UserError(`Ordner "${clip(want, 100)}" nicht gefunden. Vorhandene Ordner: ${list.map((m) => `"${m.path}"`).join(', ')}.`);
+      throw new UserError(`Folder "${clip(want, 100)}" not found. Available folders: ${list.map((m) => `"${m.path}"`).join(', ')}.`);
     }
     return hit;
   }
@@ -106,7 +107,7 @@ export class MailService {
   private parseDay(s: string | undefined, label: string, plusDays = 0): Date | undefined {
     if (!s) return undefined;
     const d = DateTime.fromISO(s.trim().slice(0, 10), { zone: this.cfg.timezone });
-    if (!d.isValid) throw new UserError(`${label} "${clip(s, 40)}" ist ungültig. Erwartet: JJJJ-MM-TT.`);
+    if (!d.isValid) throw new UserError(`${label} "${clip(s, 40)}" is invalid. Expected: YYYY-MM-DD.`);
     return d.startOf('day').plus({ days: plusDays }).toJSDate();
   }
 
@@ -121,7 +122,7 @@ export class MailService {
       unreadOnly: a.unreadOnly || undefined,
     };
     if (!crit.from && !crit.to && !crit.subject && !crit.text && !crit.since && !crit.before && !crit.unreadOnly) {
-      throw new UserError('Bitte mindestens ein Suchkriterium angeben: from, to, subject, text, since, until oder unread_only.');
+      throw new UserError('Please specify at least one search criterion: from, to, subject, text, since, until or unread_only.');
     }
     const limit = Math.min(a.limit ?? 20, MAX_LIMIT);
     const all = await this.mailboxes();
@@ -143,7 +144,7 @@ export class MailService {
         total += r.total;
         found.push(...r.messages);
       } catch (e) {
-        // Ein einzelner Ordner darf die Suche nicht scheitern lassen, außer es ist der einzige.
+        // A single folder must not make the whole search fail, unless it is the only one.
         if (targets.length === 1) throw e;
         skipped.push(box.path);
       }
@@ -186,8 +187,8 @@ export class MailService {
   }
 
   /**
-   * Konversation zur Nachricht: iCloud bietet kein THREAD, daher werden Message-ID, In-Reply-To und References
-   * in den Ordnern Posteingang, Gesendet, Entwürfe und Archiv in mehreren Runden zusammengeführt.
+   * Conversation of a message: iCloud does not offer THREAD, so Message-ID, In-Reply-To and References
+   * are merged over several rounds across the inbox, sent, drafts and archive folders.
    */
   async getThread(id: string, opts: { includeText?: boolean; excerptChars?: number } = {}) {
     const ref = decodeRef(id);
@@ -222,7 +223,7 @@ export class MailService {
       if (!added) break;
     }
 
-    // Dieselbe Nachricht kann in mehreren Ordnern liegen (z. B. Gesendet und Archiv): nach Message-ID zusammenführen.
+    // The same message can be in several folders (e.g. sent and archive): merge by Message-ID.
     const seen = new Set<string>();
     const messages = [...byId.values()]
       .sort((x, y) => (Date.parse(x.date) || 0) - (Date.parse(y.date) || 0))

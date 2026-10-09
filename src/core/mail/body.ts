@@ -3,7 +3,7 @@ import TurndownService from 'turndown';
 import { clip } from '../untrusted.js';
 import type { Address } from './types.js';
 
-/** Seitengröße in Zeichen (Unicode-Zeichen, nicht Bytes). */
+/** Page size in characters (Unicode characters, not bytes). */
 export const PAGE_SIZE = 8000;
 const MAX_HTML_CHARS = 1_000_000;
 
@@ -26,7 +26,7 @@ export interface ParsedMessage {
   references: string[];
   attachments: Attachment[];
   text: string;
-  /** Format, in dem der Text tatsächlich vorliegt. */
+  /** Format the text is actually in. */
   format: 'text' | 'markdown';
 }
 
@@ -45,7 +45,7 @@ function td(): TurndownService {
   if (turndown) return turndown;
   const t = new TurndownService({ headingStyle: 'atx', bulletListMarker: '-', codeBlockStyle: 'fenced', linkStyle: 'inlined' });
   t.remove(['script', 'style', 'head', 'title', 'meta', 'link', 'iframe', 'object', 'embed', 'svg', 'noscript', 'template'] as never);
-  // Versteckte Elemente (häufiger Weg, unsichtbare Anweisungen in Mails zu verstecken) werden nicht übernommen.
+  // Hidden elements (a common way to hide invisible instructions in mails) are dropped.
   t.addRule('hidden', {
     filter: (node) => {
       const el = node as unknown as { getAttribute?: (n: string) => string | null };
@@ -54,12 +54,12 @@ function td(): TurndownService {
     },
     replacement: () => '',
   });
-  // Bilder: nur der Alternativtext, keine Adressen (Tracking-Pixel).
+  // Images: only the alt text, no URLs (tracking pixels).
   t.addRule('images', {
     filter: 'img',
     replacement: (_c, node) => {
       const alt = (node as unknown as { getAttribute(n: string): string | null }).getAttribute('alt')?.trim();
-      return alt ? `[Bild: ${alt}]` : '';
+      return alt ? `[Image: ${alt}]` : '';
     },
   });
   turndown = t;
@@ -71,7 +71,7 @@ export function htmlToMarkdown(html: string): string {
   return tidy(td().turndown(input));
 }
 
-/** Entfernt unsichtbare Zeichen und übermäßige Leerzeilen. */
+/** Removes invisible characters and excessive blank lines. */
 export function tidy(text: string): string {
   return text
     .replace(/[﻿​-‏⁠­]/g, '')
@@ -81,7 +81,7 @@ export function tidy(text: string): string {
     .trim();
 }
 
-/** Liest eine Nachricht aus dem Rohtext. Nichts wird nachgeladen, keine Anhänge werden ausgegeben. */
+/** Parses a message from its raw source. Nothing is fetched remotely, no attachments are returned. */
 export async function parseMessage(source: Buffer, format: 'text' | 'markdown'): Promise<ParsedMessage> {
   const p: ParsedMail = await simpleParser(source, { skipHtmlToText: true, skipTextToHtml: true, skipImageLinks: true });
   const html = typeof p.html === 'string' ? p.html : '';
@@ -105,7 +105,7 @@ export async function parseMessage(source: Buffer, format: 'text' | 'markdown'):
 
   const refs = Array.isArray(p.references) ? p.references : p.references ? [p.references] : [];
   return {
-    subject: clip(p.subject ?? '', 300) || '(ohne Betreff)',
+    subject: clip(p.subject ?? '', 300) || '(no subject)',
     from: addrs(p.from),
     replyTo: addrs(p.replyTo),
     to: addrs(p.to),
@@ -115,7 +115,7 @@ export async function parseMessage(source: Buffer, format: 'text' | 'markdown'):
     ...(p.inReplyTo ? { inReplyTo: String(p.inReplyTo).replace(/^<|>$/g, '') } : {}),
     references: refs.map((r) => r.replace(/^<|>$/g, '')).slice(0, 50),
     attachments: (p.attachments ?? []).slice(0, 50).map((a) => ({
-      filename: clip(a.filename ?? '(ohne Namen)', 200),
+      filename: clip(a.filename ?? '(no name)', 200),
       contentType: clip(a.contentType ?? 'application/octet-stream', 100),
       size: a.size ?? 0,
       inline: a.contentDisposition === 'inline' || Boolean(a.related),
@@ -134,7 +134,7 @@ export interface Page {
   nextOffset?: number;
 }
 
-/** Seitenweise Ausgabe nach Unicode-Zeichen. Ein Offset hinter dem Ende wird auf das Ende begrenzt. */
+/** Paged output by Unicode characters. An offset past the end is clamped to the end. */
 export function paginate(text: string, offset = 0, size = PAGE_SIZE): Page {
   const chars = Array.from(text);
   const total = chars.length;
@@ -150,7 +150,7 @@ export function paginate(text: string, offset = 0, size = PAGE_SIZE): Page {
   };
 }
 
-/** Entfernt zitierte Zeilen (beginnend mit ">") für knappe Auszüge. */
+/** Removes quoted lines (starting with ">") for short excerpts. */
 export function withoutQuotes(text: string): string {
   return tidy(
     text

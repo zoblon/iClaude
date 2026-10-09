@@ -16,7 +16,7 @@ export interface Address {
 }
 
 export interface Contact {
-  /** Pfad der .vcf-Ressource; identifiziert den Kontakt (für get_contact). */
+  /** Path of the .vcf resource; identifies the contact (for get_contact). */
   id: string;
   name: string;
   nickname?: string;
@@ -34,7 +34,7 @@ export interface Contact {
 const MAX_ITEMS = 10;
 const TEXT = 200;
 
-/** "_$!<Work>!$_" -> "Work", "item" -> leer. */
+/** "_$!<Work>!$_" -> "Work", "item" -> empty. */
 function cleanLabel(raw: string): string {
   return raw.replace(/^_\$!<(.*)>!\$_$/, '$1').trim();
 }
@@ -57,7 +57,7 @@ function birthdayOf(p: ICAL.Property | null): string | undefined {
     if (v && typeof v === 'object' && 'month' in v) {
       const t = v as { year: number; month: number; day: number };
       const mmdd = `${String(t.month).padStart(2, '0')}-${String(t.day).padStart(2, '0')}`;
-      // Apple speichert Geburtstage ohne Jahr mit 1604 oder 1900
+      // Apple stores birthdays without a year as 1604 or 1900
       return t.year <= 1900 ? `--${mmdd}` : `${t.year}-${mmdd}`;
     }
     return clip(String(v), 20);
@@ -66,7 +66,7 @@ function birthdayOf(p: ICAL.Property | null): string | undefined {
   }
 }
 
-/** Liest eine vCard. Gibt undefined für Gruppen und unlesbare Einträge zurück. Fotos werden bewusst ignoriert. */
+/** Parses a vCard. Returns undefined for groups and unreadable entries. Photos are deliberately ignored. */
 export function parseVCard(data: string, id: string, addressBook: string): Contact | undefined {
   let card: ICAL.Component;
   try {
@@ -104,7 +104,7 @@ export function parseVCard(data: string, id: string, addressBook: string): Conta
   const orgParts = asList(safe(() => card.getFirstPropertyValue('org'))).filter(Boolean);
   const organization = orgParts.join(', ');
   const fn = String(safe(() => card.getFirstPropertyValue('fn')) ?? '').trim();
-  const name = clip(fn || composed || organization, TEXT) || '(ohne Namen)';
+  const name = clip(fn || composed || organization, TEXT) || '(no name)';
 
   const addresses: Address[] = card
     .getAllProperties('adr')

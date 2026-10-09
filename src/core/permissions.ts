@@ -1,13 +1,13 @@
 /**
- * Zentrale Rechteprüfung für alle Schreibzugriffe.
+ * Central permission check for all write access.
  *
- * Schreibende Methoden der Gateways verlangen ein Grant (WriteGrant, DraftGrant, TrashGrant). Das gibt es nur als
- * Ergebnis der authorize*-Funktionen unten. Wer schreiben will, muss also hier durch.
+ * Writing gateway methods require a grant (WriteGrant, DraftGrant, TrashGrant). Grants only exist as the
+ * result of the authorize* functions below, so anything that wants to write has to pass through here.
  *
- * Gelöscht werden darf nur auf zwei eng begrenzten Wegen:
- *  - einen eigenen Termin (authorizeDelete; vorher wird er als .ics gesichert),
- *  - eine Mail in den Papierkorb VERSCHIEBEN (authorizeTrash). Mails werden nie endgültig gelöscht.
- * Gesendet wird nie.
+ * Deletion is allowed in only two narrowly limited ways:
+ *  - an event of the user's own (authorizeDelete; it is backed up as .ics first),
+ *  - MOVING a message to the Trash (authorizeTrash). Messages are never deleted permanently.
+ * Nothing is ever sent.
  */
 import type { CalendarInfo } from './calendar/types.js';
 import type { MailboxInfo } from './mail/types.js';
@@ -23,7 +23,7 @@ export class WriteGrant {
     readonly calendar: CalendarInfo,
   ) {}
 
-  /** Nur intern; wird ausschließlich von authorize* aufgerufen. */
+  /** Internal only; called exclusively by authorize*. */
   static issue(op: WriteOp, calendar: CalendarInfo): WriteGrant {
     const g = new WriteGrant(op, calendar);
     issued.add(g);
@@ -39,33 +39,33 @@ const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLow
 
 function assertUsable(c: CalendarInfo): void {
   if (c.kind !== 'events') {
-    throw new UserError(`"${c.name}" ist eine Erinnerungs-/Aufgabenliste. Dieser Konnektor schreibt nur Termine.`);
+    throw new UserError(`"${c.name}" is a reminders/tasks list. This connector only writes events.`);
   }
-  if (c.subscribed) throw new UserError(`"${c.name}" ist ein abonnierter Kalender und schreibgeschützt.`);
-  if (!c.writable) throw new UserError(`"${c.name}" ist schreibgeschützt.`);
+  if (c.subscribed) throw new UserError(`"${c.name}" is a subscribed calendar and read-only.`);
+  if (!c.writable) throw new UserError(`"${c.name}" is read-only.`);
 }
 
 export interface CreateRequest {
   calendars: CalendarInfo[];
-  /** Name eines privaten Kalenders. */
+  /** Name of a private calendar. */
   calendar?: string | undefined;
-  /** Exakter Name eines geteilten Kalenders (nur so kann in einen geteilten Kalender geschrieben werden). */
+  /** Exact name of a shared calendar (the only way to write to a shared calendar). */
   sharedCalendar?: string | undefined;
   defaultCalendar?: string | undefined;
 }
 
 export function authorizeCreate(r: CreateRequest): WriteGrant {
   if (r.calendar && r.sharedCalendar) {
-    throw new UserError('Bitte nur eines von "calendar" (privater Kalender) und "shared_calendar" (geteilter Kalender) angeben.');
+    throw new UserError('Please specify only one of "calendar" (private calendar) and "shared_calendar" (shared calendar).');
   }
   const events = r.calendars.filter((c) => c.kind === 'events');
-  const names = (list: CalendarInfo[]) => list.map((c) => `"${c.name}"`).join(', ') || '(keine)';
+  const names = (list: CalendarInfo[]) => list.map((c) => `"${c.name}"`).join(', ') || '(none)';
 
   if (r.sharedCalendar) {
     const hit = r.calendars.find((c) => same(c.name, r.sharedCalendar!));
-    if (!hit) throw new UserError(`Kalender "${r.sharedCalendar}" nicht gefunden. Geteilte Kalender: ${names(events.filter((c) => c.shared))}.`);
+    if (!hit) throw new UserError(`Calendar "${r.sharedCalendar}" not found. Shared calendars: ${names(events.filter((c) => c.shared))}.`);
     if (!hit.shared) {
-      throw new UserError(`"${hit.name}" ist kein geteilter Kalender. Bitte "calendar" statt "shared_calendar" verwenden.`);
+      throw new UserError(`"${hit.name}" is not a shared calendar. Please use "calendar" instead of "shared_calendar".`);
     }
     assertUsable(hit);
     return WriteGrant.issue('create', hit);
@@ -74,40 +74,40 @@ export function authorizeCreate(r: CreateRequest): WriteGrant {
   const wanted = r.calendar ?? r.defaultCalendar;
   if (!wanted) {
     throw new UserError(
-      `Kein Kalender angegeben und kein Standardkalender eingestellt. Privater Kalender mit "calendar" wählen. Private Kalender: ${names(events.filter((c) => !c.shared))}.`,
+      `No calendar specified and no default calendar configured. Choose a private calendar with "calendar". Private calendars: ${names(events.filter((c) => !c.shared))}.`,
     );
   }
   const hit = r.calendars.find((c) => same(c.name, wanted));
-  if (!hit) throw new UserError(`Kalender "${wanted}" nicht gefunden. Private Kalender: ${names(events.filter((c) => !c.shared))}.`);
+  if (!hit) throw new UserError(`Calendar "${wanted}" not found. Private calendars: ${names(events.filter((c) => !c.shared))}.`);
   assertUsable(hit);
   if (hit.shared) {
     const how = r.calendar
-      ? `Termine dort erscheinen sofort bei anderen Personen. Wenn das gewollt ist, den Kalender ausdrücklich mit shared_calendar="${hit.name}" nennen.`
-      : `Der eingestellte Standardkalender darf nicht geteilt sein. Bitte einen privaten Kalender als Standard einstellen oder "calendar" angeben.`;
-    throw new UserError(`"${hit.name}" ist ein geteilter Kalender. ${how}`);
+      ? `Events there appear immediately for other people. If that is intended, name the calendar explicitly with shared_calendar="${hit.name}".`
+      : `The configured default calendar must not be shared. Please set a private calendar as the default or specify "calendar".`;
+    throw new UserError(`"${hit.name}" is a shared calendar. ${how}`);
   }
   return WriteGrant.issue('create', hit);
 }
 
-/** Eigenschaften des bestehenden Termins, die für die Rechteprüfung relevant sind. */
+/** Properties of the existing event that matter for the permission check. */
 export interface EventFacts {
   hasMaster: boolean;
   hasAttendees: boolean;
   organizer?: string | undefined;
   recurring: boolean;
-  /** EXDATE oder einzeln verschobene Vorkommen (RECURRENCE-ID). */
+  /** EXDATE or individually moved occurrences (RECURRENCE-ID). */
   hasExceptions: boolean;
 }
 
 export interface UpdateRequest {
   calendar: CalendarInfo;
   facts: EventFacts;
-  /** Adressen des Nutzers (Apple-ID, iCloud-Adresse). */
+  /** The user's addresses (Apple ID, iCloud address). */
   selfAddresses: string[];
   sharedCalendar?: string | undefined;
-  /** Wenn gesetzt, will der Aufrufer ein einzelnes Vorkommen ändern. */
+  /** If set, the caller wants to change a single occurrence. */
   occurrenceStart?: string | undefined;
-  /** Ändert die Anfrage Start, Ende oder Ganztägigkeit? */
+  /** Does the request change start, end or all-day status? */
   touchesTime: boolean;
 }
 
@@ -118,29 +118,29 @@ export function authorizeUpdate(r: UpdateRequest): WriteGrant {
   if (c.shared) {
     if (!r.sharedCalendar || !same(r.sharedCalendar, c.name)) {
       throw new UserError(
-        `Der Termin liegt im geteilten Kalender "${c.name}". Änderungen dort erscheinen sofort bei anderen Personen. ` +
-          `Zum Ändern den Kalender ausdrücklich mit shared_calendar="${c.name}" nennen.`,
+        `The event is in the shared calendar "${c.name}". Changes there appear immediately for other people. ` +
+          `To change it, name the calendar explicitly with shared_calendar="${c.name}".`,
       );
     }
   } else if (r.sharedCalendar) {
-    throw new UserError(`"${c.name}" ist kein geteilter Kalender. shared_calendar nur für geteilte Kalender verwenden.`);
+    throw new UserError(`"${c.name}" is not a shared calendar. Use shared_calendar only for shared calendars.`);
   }
 
   if (!f.hasMaster) {
-    throw new UserError('Dieser Eintrag ist nur ein einzelnes Vorkommen einer Serie, dessen Serie hier nicht liegt. Änderung abgelehnt; bitte direkt in Apple Kalender ändern.');
+    throw new UserError('This entry is only a single occurrence of a recurring series whose series is not stored here. Change refused; please change it directly in Apple Calendar.');
   }
   if (r.occurrenceStart) {
-    throw new UserError('Änderungen an einzelnen Vorkommen einer Terminserie werden nicht unterstützt. Es kann nur die ganze Serie geändert werden (occurrence_start weglassen).');
+    throw new UserError('Changing single occurrences of a recurring series is not supported. Only the whole series can be changed (omit occurrence_start).');
   }
   if (f.hasAttendees) {
-    throw new UserError('Der Termin hat Teilnehmer. Termine mit Teilnehmern werden nicht geändert, weil das Einladungen auslösen kann. Bitte die Änderung direkt in Apple Kalender vornehmen.');
+    throw new UserError('The event has attendees. Events with attendees are not changed because that can trigger invitations. Please make the change directly in Apple Calendar.');
   }
   if (f.organizer && !r.selfAddresses.some((a) => same(a, f.organizer!))) {
-    throw new UserError('Der Termin wurde von einer anderen Person organisiert und wird nicht geändert. Bitte die Änderung direkt in Apple Kalender vornehmen.');
+    throw new UserError('The event was organized by another person and is not changed. Please make the change directly in Apple Calendar.');
   }
   if (f.recurring && f.hasExceptions && r.touchesTime) {
     throw new UserError(
-      'Diese Serie enthält Ausnahmen (gelöschte oder verschobene Vorkommen). Die Zeit der ganzen Serie wird nicht geändert, damit die Ausnahmen nicht verrutschen. Titel, Ort, Notiz und Erinnerungen können geändert werden.',
+      'This series contains exceptions (deleted or moved occurrences). The time of the whole series is not changed so the exceptions do not shift. Title, location, notes and alerts can be changed.',
     );
   }
   return WriteGrant.issue('update', c);
@@ -149,19 +149,19 @@ export function authorizeUpdate(r: UpdateRequest): WriteGrant {
 export interface DeleteRequest {
   calendar: CalendarInfo;
   facts: EventFacts;
-  /** Adressen des Nutzers (Apple-ID, iCloud-Adresse). */
+  /** The user's addresses (Apple ID, iCloud address). */
   selfAddresses: string[];
-  /** Wird nie als Erlaubnis gewertet; nur damit die Ablehnung den Grund nennen kann. */
+  /** Never treated as permission; only so the refusal can state the reason. */
   sharedCalendar?: string | undefined;
-  /** Wenn gesetzt, will der Aufrufer ein einzelnes Vorkommen löschen. */
+  /** If set, the caller wants to delete a single occurrence. */
   occurrenceStart?: string | undefined;
 }
 
 /**
- * Löschen eines Termins. Strenger als Ändern:
- *  - nie in einem geteilten Kalender (auch nicht mit shared_calendar; das gilt nur fürs Schreiben),
- *  - nie bei Teilnehmern oder fremdem Organisator (iCloud könnte Absagen verschicken),
- *  - nie einzelne Vorkommen einer Serie, nur die ganze Serie.
+ * Deleting an event. Stricter than changing:
+ *  - never in a shared calendar (not even with shared_calendar; that only applies to writing),
+ *  - never with attendees or another organizer (iCloud could send cancellations),
+ *  - never single occurrences of a series, only the whole series.
  */
 export function authorizeDelete(r: DeleteRequest): WriteGrant {
   const { calendar: c, facts: f } = r;
@@ -169,35 +169,35 @@ export function authorizeDelete(r: DeleteRequest): WriteGrant {
 
   if (c.shared) {
     throw new UserError(
-      `Der Termin liegt im geteilten Kalender "${c.name}". Termine in geteilten Kalendern werden nie gelöscht, auch nicht mit shared_calendar ` +
-        '(das gilt nur fürs Schreiben), weil das Löschen sofort bei anderen Personen sichtbar wäre. Bitte direkt in Apple Kalender löschen.',
+      `The event is in the shared calendar "${c.name}". Events in shared calendars are never deleted, not even with shared_calendar ` +
+        '(that only applies to writing), because the deletion would be visible to other people immediately. Please delete it directly in Apple Calendar.',
     );
   }
   if (r.sharedCalendar) {
-    throw new UserError('delete_event kennt kein shared_calendar: Termine in geteilten Kalendern werden nie gelöscht. Den Parameter weglassen.');
+    throw new UserError('delete_event has no shared_calendar: events in shared calendars are never deleted. Omit the parameter.');
   }
   if (!f.hasMaster) {
-    throw new UserError('Dieser Eintrag ist nur ein einzelnes Vorkommen einer Serie, dessen Serie hier nicht liegt. Löschen abgelehnt; bitte direkt in Apple Kalender löschen.');
+    throw new UserError('This entry is only a single occurrence of a recurring series whose series is not stored here. Deletion refused; please delete it directly in Apple Calendar.');
   }
   if (r.occurrenceStart) {
-    throw new UserError('Einzelne Vorkommen einer Terminserie werden nicht gelöscht. Es kann nur die ganze Serie gelöscht werden (occurrence_start weglassen); einzelne Vorkommen bitte in Apple Kalender löschen.');
+    throw new UserError('Single occurrences of a recurring series are not deleted. Only the whole series can be deleted (omit occurrence_start); please delete single occurrences in Apple Calendar.');
   }
   if (f.hasAttendees) {
-    throw new UserError('Der Termin hat Teilnehmer. Termine mit Teilnehmern werden nicht gelöscht, weil iCloud dabei Absagen verschicken könnte. Bitte direkt in Apple Kalender löschen.');
+    throw new UserError('The event has attendees. Events with attendees are not deleted because iCloud could send cancellations. Please delete it directly in Apple Calendar.');
   }
   if (f.organizer && !r.selfAddresses.some((a) => same(a, f.organizer!))) {
-    throw new UserError('Der Termin wurde von einer anderen Person organisiert und wird nicht gelöscht. Bitte direkt in Apple Kalender löschen.');
+    throw new UserError('The event was organized by another person and is not deleted. Please delete it directly in Apple Calendar.');
   }
   return WriteGrant.issue('delete', c);
 }
 
 /* ------------------------------------------------------------------ */
-/* Mail: Entwürfe ablegen                                               */
+/* Mail: saving drafts                                                 */
 /* ------------------------------------------------------------------ */
 
 const draftIssued = new WeakSet<DraftGrant>();
 
-/** Erlaubnis, genau einen Entwurf im Entwürfe-Ordner abzulegen. Der Zielordner ist nicht frei wählbar. */
+/** Permission to save exactly one draft in the Drafts folder. The target folder cannot be chosen freely. */
 export class DraftGrant {
   private constructor(readonly mailbox: string) {}
 
@@ -212,31 +212,31 @@ export class DraftGrant {
   }
 }
 
-/** Der Entwurf geht immer in den Ordner mit dem Merkmal \Drafts (SPECIAL-USE), nie in einen anderen. */
+/** The draft always goes to the folder with the \Drafts attribute (SPECIAL-USE), never to any other. */
 export function authorizeDraft(mailboxes: MailboxInfo[]): DraftGrant {
   const drafts = mailboxes.filter((m) => m.role === 'drafts');
   if (drafts.length !== 1) {
     throw new UserError(
       drafts.length === 0
-        ? 'Es wurde kein Entwürfe-Ordner gefunden. Bitte in Apple Mail prüfen, ob der Ordner "Entwürfe" mit iCloud synchronisiert wird.'
-        : 'Es gibt mehrere Entwürfe-Ordner; der Zielordner ist nicht eindeutig. Es wurde nichts geschrieben.',
+        ? 'No Drafts folder was found. Please check in Apple Mail that the Drafts folder is synced with iCloud.'
+        : 'There are several Drafts folders; the target folder is ambiguous. Nothing was written.',
     );
   }
   return DraftGrant.issue(drafts[0]!.path);
 }
 
 /* ------------------------------------------------------------------ */
-/* Mail: in den Papierkorb verschieben (nie endgültig löschen)          */
+/* Mail: move to Trash (never delete permanently)                      */
 /* ------------------------------------------------------------------ */
 
-/** Höchstens so viele Mails je Aufruf. */
+/** Maximum number of messages per call. */
 export const MAX_TRASH_PER_CALL = 20;
 
 const trashIssued = new WeakSet<TrashGrant>();
 
 /**
- * Erlaubnis, Mails aus den genannten Ordnern in den Papierkorb zu VERSCHIEBEN. Das Ziel steht fest (Ordner mit dem Merkmal \Trash),
- * andere Ziele gibt es nicht. Die Erlaubnis deckt weder \Deleted noch EXPUNGE ab: beides gibt es im Code nicht.
+ * Permission to MOVE messages from the given folders to the Trash. The target is fixed (folder with the \Trash attribute);
+ * there are no other targets. The permission covers neither \Deleted nor EXPUNGE: neither exists in the code.
  */
 export class TrashGrant {
   private constructor(
@@ -258,35 +258,35 @@ export class TrashGrant {
 
 export interface TrashRequest {
   mailboxes: MailboxInfo[];
-  /** Ordner der Mails, die verschoben werden sollen (je Mail einer). */
+  /** Folders of the messages to be moved (one per message). */
   sourcePaths: string[];
 }
 
 /**
- * Der Papierkorb wird über das Merkmal \Trash (SPECIAL-USE) gefunden, nie über den Namen.
- * Mails im Papierkorb selbst werden nicht angefasst: ein endgültiges Löschen gibt es nicht.
+ * The Trash is found via the \Trash attribute (SPECIAL-USE), never by name.
+ * Messages already in the Trash are not touched: there is no permanent deletion.
  */
 export function authorizeTrash(r: TrashRequest): TrashGrant {
   const n = r.sourcePaths.length;
-  if (n === 0) throw new UserError('Keine Mail angegeben. Bitte mindestens eine Mail nennen.');
+  if (n === 0) throw new UserError('No message specified. Please name at least one message.');
   if (n > MAX_TRASH_PER_CALL) {
-    throw new UserError(`Zu viele Mails auf einmal (${n}, höchstens ${MAX_TRASH_PER_CALL} je Aufruf). Es wurde nichts verschoben. Bitte in kleinere Gruppen aufteilen.`);
+    throw new UserError(`Too many messages at once (${n}, at most ${MAX_TRASH_PER_CALL} per call). Nothing was moved. Please split them into smaller groups.`);
   }
   const trash = r.mailboxes.filter((m) => m.role === 'trash' && m.roleBy === 'flag');
   if (trash.length !== 1) {
     throw new UserError(
       trash.length === 0
-        ? 'Es wurde kein Papierkorb-Ordner mit dem Merkmal \\Trash gefunden. Es wurde nichts verschoben. Bitte in Apple Mail prüfen, ob der Papierkorb mit iCloud synchronisiert wird.'
-        : 'Es gibt mehrere Ordner mit dem Merkmal \\Trash; der Papierkorb ist nicht eindeutig. Es wurde nichts verschoben.',
+        ? 'No Trash folder with the \\Trash attribute was found. Nothing was moved. Please check in Apple Mail that the Trash is synced with iCloud.'
+        : 'There are several folders with the \\Trash attribute; the Trash is ambiguous. Nothing was moved.',
     );
   }
   const target = trash[0]!;
   for (const path of new Set(r.sourcePaths)) {
     if (path === target.path) {
-      throw new UserError('Mindestens eine Mail liegt bereits im Papierkorb. Mails werden dort nie angefasst und nie endgültig gelöscht; das bitte in Apple Mail erledigen. Es wurde nichts verschoben.');
+      throw new UserError('At least one message is already in the Trash. Messages there are never touched and never deleted permanently; please do that in Apple Mail. Nothing was moved.');
     }
     if (!r.mailboxes.some((m) => m.path === path)) {
-      throw new UserError('Der Ordner einer Mail ist nicht bekannt. Es wurde nichts verschoben. Bitte die Mail mit list_recent oder search_messages neu suchen.');
+      throw new UserError('The folder of a message is unknown. Nothing was moved. Please find the message again with list_recent or search_messages.');
     }
   }
   return TrashGrant.issue(target.path, r.sourcePaths, n);

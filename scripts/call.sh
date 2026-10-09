@@ -1,6 +1,6 @@
 #!/bin/bash
-# Hilfsskript: ruft ein Tool über den MCP Inspector auf.
-# Nutzung: scripts/call.sh <tool> [key=value ...]   (Werte dürfen Leerzeichen enthalten; JSON für Listen/Objekte)
+# Helper script: calls a tool via the MCP Inspector.
+# Usage: scripts/call.sh <tool> [key=value ...]   (values may contain spaces; JSON for lists/objects)
 set -e
 tool="$1"; shift
 cmd=(npx -y @modelcontextprotocol/inspector --cli ./scripts/dev-server.sh --method tools/call --tool-name "$tool")

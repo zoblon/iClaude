@@ -15,57 +15,57 @@ const base = {
 };
 
 describe('findFreeSlots', () => {
-  it('liefert den ganzen Tag, wenn nichts belegt ist', () => {
+  it('returns the whole day when nothing is busy', () => {
     const r = findFreeSlots([], { ...base, rangeStartMs: t('2026-10-12'), rangeEndMs: t('2026-10-13') });
     expect(r.slots).toEqual([{ start: '2026-10-12T09:00:00+02:00', end: '2026-10-12T18:00:00+02:00', minutes: 540 }]);
   });
 
-  it('spart belegte Zeiten aus und verwirft zu kurze Lücken', () => {
+  it('leaves out busy times and discards gaps that are too short', () => {
     const busy = [
       { startMs: t('2026-10-12T10:00'), endMs: t('2026-10-12T12:00') },
-      { startMs: t('2026-10-12T12:30'), endMs: t('2026-10-12T17:30') }, // 30 min Lücke davor, 30 min danach: zu kurz
+      { startMs: t('2026-10-12T12:30'), endMs: t('2026-10-12T17:30') }, // 30 min gap before, 30 min after: too short
     ];
     const r = findFreeSlots(busy, { ...base, rangeStartMs: t('2026-10-12'), rangeEndMs: t('2026-10-13') });
     expect(r.slots.map((s) => `${s.start.slice(11, 16)}-${s.end.slice(11, 16)}`)).toEqual(['09:00-10:00']);
   });
 
-  it('verschmilzt überlappende Termine', () => {
+  it('merges overlapping events', () => {
     expect(mergeIntervals([{ startMs: 5, endMs: 10 }, { startMs: 1, endMs: 6 }, { startMs: 20, endMs: 30 }])).toEqual([
       { startMs: 1, endMs: 10 },
       { startMs: 20, endMs: 30 },
     ]);
   });
 
-  it('beachtet Wochentage und eigenes Tagesfenster', () => {
+  it('respects weekdays and a custom daily window', () => {
     const r = findFreeSlots([], {
       ...base,
       dayStart: '14:00',
       dayEnd: '16:00',
       weekdaysOnly: true,
-      rangeStartMs: t('2026-10-09'), // Freitag
-      rangeEndMs: t('2026-10-13'), // bis inkl. Montag
+      rangeStartMs: t('2026-10-09'), // Friday
+      rangeEndMs: t('2026-10-13'), // up to and including Monday
     });
     expect(r.slots.map((s) => s.start.slice(0, 16))).toEqual(['2026-10-09T14:00', '2026-10-12T14:00']);
   });
 
-  it('bietet nichts in der Vergangenheit an', () => {
+  it('offers nothing in the past', () => {
     const r = findFreeSlots([], { ...base, nowMs: t('2026-10-12T13:15'), rangeStartMs: t('2026-10-12'), rangeEndMs: t('2026-10-13') });
     expect(r.slots[0]?.start).toBe('2026-10-12T13:15:00+02:00');
   });
 
-  it('rundet "jetzt" auf die nächsten 5 Minuten auf', () => {
+  it('rounds "now" up to the next 5 minutes', () => {
     const r = findFreeSlots([], { ...base, nowMs: t('2026-10-12T13:17:25'), rangeStartMs: t('2026-10-12'), rangeEndMs: t('2026-10-13') });
     expect(r.slots[0]?.start).toBe('2026-10-12T13:20:00+02:00');
   });
 
-  it('begrenzt die Anzahl und meldet, dass es mehr gibt', () => {
+  it('limits the count and reports that there are more', () => {
     const r = findFreeSlots([], { ...base, maxSlots: 2, rangeStartMs: t('2026-10-12'), rangeEndMs: t('2026-10-20') });
     expect(r.slots).toHaveLength(2);
     expect(r.more).toBe(true);
   });
 
-  it('lehnt ungültige Uhrzeiten ab', () => {
-    expect(() => findFreeSlots([], { ...base, dayStart: '25:00', rangeStartMs: 0, rangeEndMs: 1 })).toThrow(/ungültig/);
-    expect(() => findFreeSlots([], { ...base, dayStart: '18:00', dayEnd: '09:00', rangeStartMs: 0, rangeEndMs: 1 })).toThrow(/nach dem Tagesbeginn/);
+  it('rejects invalid times of day', () => {
+    expect(() => findFreeSlots([], { ...base, dayStart: '25:00', rangeStartMs: 0, rangeEndMs: 1 })).toThrow(/is invalid/);
+    expect(() => findFreeSlots([], { ...base, dayStart: '18:00', dayEnd: '09:00', rangeStartMs: 0, rangeEndMs: 1 })).toThrow(/after the day start/);
   });
 });

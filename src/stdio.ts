@@ -8,6 +8,6 @@ try {
   serveStdio(() => createServer(cfg), { onerror: (e) => log('transport-error', { kind: e.name }) });
   log('start', { timezone: cfg.timezone });
 } catch (e) {
-  process.stderr.write(`[icloud-mcp] Start fehlgeschlagen: ${toUserMessage(e)}\n`);
+  process.stderr.write(`[icloud-mcp] Startup failed: ${toUserMessage(e)}\n`);
   process.exit(1);
 }

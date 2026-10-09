@@ -3,24 +3,24 @@ import type { Contact } from './vcard.js';
 
 const MAX_LIMIT = 50;
 
-/** Lesender Zugriff auf Kontakte (austauschbar). Es gibt bewusst keine Schreibmethoden. */
+/** Read access to contacts (replaceable). There are deliberately no write methods. */
 export interface ContactReader {
   loadAll(): Promise<{ contacts: Contact[]; truncated: boolean }>;
 }
 
 const strip = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-/** Kleinbuchstaben, Akzente entfernt (ü -> u), ß -> ss. */
+/** Lower case, accents removed (ü -> u), ß -> ss. */
 export function norm(s: string): string {
   return strip(s.toLowerCase().replace(/ß/g, 'ss'));
 }
 
-/** Deutsche Schreibweise: ü -> ue, ä -> ae, ö -> oe, ß -> ss (so tippen viele "Mueller" für "Müller"). */
+/** German transliteration: ü -> ue, ä -> ae, ö -> oe, ß -> ss (many people type "Mueller" for "Müller"). */
 function normDe(s: string): string {
   return strip(s.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss'));
 }
 
-/** Beide Schreibweisen eines Textes: Suchbegriff und Daten werden jeweils gleich umgewandelt und verglichen. */
+/** Both spellings of a text: query and data are converted the same way and compared. */
 type Forms = readonly [string, string];
 const forms = (s: string): Forms => [normDe(s), norm(s)];
 const includes = (hay: Forms, t: Forms) => hay[0].includes(t[0]) || hay[1].includes(t[1]);
@@ -30,7 +30,7 @@ const wordStarts = (hay: Forms, t: Forms) =>
 
 const digits = (s: string) => s.replace(/\D/g, '');
 
-/** Kompakte Ausgabe für Trefferlisten. */
+/** Compact output for result lists. */
 export interface ContactSummary {
   id: string;
   name: string;
@@ -54,10 +54,10 @@ export function summarize(c: Contact): ContactSummary {
 export class ContactService {
   constructor(private readonly reader: ContactReader) {}
 
-  /** Alle Suchwörter müssen in Name, Spitzname, Firma, Mailadressen oder Telefonnummern vorkommen. */
+  /** Every query word must occur in the name, nickname, company, email addresses or phone numbers. */
   async search(query: string, limit = 20): Promise<{ total: number; contacts: ContactSummary[]; cut: boolean; truncated: boolean }> {
     const tokens = query.trim().split(/\s+/).filter(Boolean);
-    if (!tokens.length) throw new UserError('Der Suchbegriff darf nicht leer sein. Bitte einen Suchbegriff angeben.');
+    if (!tokens.length) throw new UserError('The search query must not be empty. Please provide a search term.');
     const { contacts, truncated } = await this.reader.loadAll();
     const tokenForms = tokens.map((t) => ({ f: forms(t), digits: digits(t), isNumber: digits(t) === t.replace(/[\s+()\-./]/g, '') }));
 
@@ -87,11 +87,11 @@ export class ContactService {
 
   async get(id: string): Promise<Contact> {
     if (!/^\/[^?#\s]*\.vcf$/i.test(id) || id.includes('..')) {
-      throw new UserError('Ungültige Kontakt-ID. Die ID aus search_contacts unverändert verwenden.');
+      throw new UserError('Invalid contact ID. Use the id from search_contacts unchanged.');
     }
     const { contacts } = await this.reader.loadAll();
     const hit = contacts.find((c) => c.id === id);
-    if (!hit) throw new UserError('Kontakt nicht gefunden. Die ID stammt evtl. aus einer früheren Abfrage; bitte erneut mit search_contacts suchen.');
+    if (!hit) throw new UserError('Contact not found. The ID may come from an earlier query; please search again with search_contacts.');
     return hit;
   }
 }

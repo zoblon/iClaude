@@ -8,10 +8,10 @@ type DavClient = Awaited<ReturnType<typeof createDAVClient>>;
 
 const TIMEOUT_MS = 30_000;
 const CACHE_MS = 5 * 60_000;
-/** Obergrenze für die Anzahl geladener Kontakte. */
+/** Upper limit for the number of contacts loaded. */
 const MAX_CONTACTS = 5000;
 
-/** Nur lesender Zugriff auf iCloud-CardDAV. Es gibt keine Methode zum Anlegen, Ändern oder Löschen. */
+/** Read-only access to iCloud CardDAV. There is no method to create, change or delete. */
 export class CardDavGateway implements ContactReader {
   private clientPromise?: Promise<DavClient>;
   private cache?: { at: number; contacts: Contact[]; truncated: boolean };
@@ -28,7 +28,7 @@ export class CardDavGateway implements ContactReader {
           defaultAccountType: 'carddav',
         }),
         TIMEOUT_MS,
-        'der Anmeldung bei iCloud-Kontakte',
+        'signing in to iCloud Contacts',
       ).catch((e) => {
         this.clientPromise = undefined;
         throw e;
@@ -40,14 +40,14 @@ export class CardDavGateway implements ContactReader {
   async loadAll(): Promise<{ contacts: Contact[]; truncated: boolean }> {
     if (this.cache && Date.now() - this.cache.at < CACHE_MS) return this.cache;
     const client = await this.client();
-    const books = await withTimeout(client.fetchAddressBooks(), TIMEOUT_MS, 'dem Laden der Adressbücher');
-    if (!books.length) throw new UserError('Es wurde kein Adressbuch gefunden. Bitte in den iCloud-Einstellungen prüfen, ob Kontakte aktiviert sind.');
+    const books = await withTimeout(client.fetchAddressBooks(), TIMEOUT_MS, 'loading the address books');
+    if (!books.length) throw new UserError('No address book was found. Please check in the iCloud settings that Contacts is enabled.');
 
     const contacts: Contact[] = [];
     let truncated = false;
     for (const book of books) {
-      const cards = await withTimeout(client.fetchVCards({ addressBook: book }), TIMEOUT_MS, 'dem Laden der Kontakte');
-      const bookName = typeof book.displayName === 'string' && book.displayName ? book.displayName : 'Kontakte';
+      const cards = await withTimeout(client.fetchVCards({ addressBook: book }), TIMEOUT_MS, 'loading the contacts');
+      const bookName = typeof book.displayName === 'string' && book.displayName ? book.displayName : 'Contacts';
       for (const card of cards) {
         if (contacts.length >= MAX_CONTACTS) {
           truncated = true;

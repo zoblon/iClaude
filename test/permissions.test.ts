@@ -15,8 +15,8 @@ beforeEach(() => {
 
 const base = { title: 'Test', start: '2026-10-20T14:00:00' };
 
-describe('Anlegen: geteilte Kalender nur bei ausdrücklicher Nennung', () => {
-  it('schreibt ohne Angabe in den privaten Standardkalender', async () => {
+describe('Creating: shared calendars only when explicitly named', () => {
+  it('writes to the private default calendar when no calendar is given', async () => {
     const r = await svc.createEvent(base);
     expect(r.calendar).toBe('MCP-Test');
     expect(r.shared).toBe(false);
@@ -24,59 +24,59 @@ describe('Anlegen: geteilte Kalender nur bei ausdrücklicher Nennung', () => {
     expect([...store.objects.keys()][0]).toContain('/priv/');
   });
 
-  it('lehnt einen geteilten Kalender über "calendar" ab und nennt den richtigen Weg', async () => {
-    await expect(svc.createEvent({ ...base, calendar: 'Gemeinsam' })).rejects.toThrow(/geteilter Kalender.*shared_calendar="Gemeinsam"/s);
+  it('refuses a shared calendar via "calendar" and names the right way', async () => {
+    await expect(svc.createEvent({ ...base, calendar: 'Shared' })).rejects.toThrow(/is a shared calendar.*shared_calendar="Shared"/s);
     expect(store.creates).toBe(0);
   });
 
-  it('lehnt auch Groß-/Kleinschreibung-Varianten über "calendar" ab', async () => {
-    await expect(svc.createEvent({ ...base, calendar: 'gemeinsam' })).rejects.toThrow(/geteilter Kalender/);
+  it('also refuses case variants via "calendar"', async () => {
+    await expect(svc.createEvent({ ...base, calendar: 'shared' })).rejects.toThrow(/is a shared calendar/);
     expect(store.creates).toBe(0);
   });
 
-  it('schreibt in den geteilten Kalender nur mit shared_calendar', async () => {
-    const r = await svc.createEvent({ ...base, sharedCalendar: 'Gemeinsam' });
-    expect(r.calendar).toBe('Gemeinsam');
+  it('writes to the shared calendar only with shared_calendar', async () => {
+    const r = await svc.createEvent({ ...base, sharedCalendar: 'Shared' });
+    expect(r.calendar).toBe('Shared');
     expect(r.shared).toBe(true);
     expect(store.creates).toBe(1);
   });
 
-  it('lehnt shared_calendar für einen privaten Kalender ab', async () => {
-    await expect(svc.createEvent({ ...base, sharedCalendar: 'MCP-Test' })).rejects.toThrow(/kein geteilter Kalender/);
+  it('refuses shared_calendar for a private calendar', async () => {
+    await expect(svc.createEvent({ ...base, sharedCalendar: 'MCP-Test' })).rejects.toThrow(/is not a shared calendar/);
     expect(store.creates).toBe(0);
   });
 
-  it('lehnt calendar und shared_calendar zusammen ab', async () => {
-    await expect(svc.createEvent({ ...base, calendar: 'MCP-Test', sharedCalendar: 'Gemeinsam' })).rejects.toThrow(/nur eines/);
+  it('refuses calendar and shared_calendar together', async () => {
+    await expect(svc.createEvent({ ...base, calendar: 'MCP-Test', sharedCalendar: 'Shared' })).rejects.toThrow(/only one of/);
     expect(store.creates).toBe(0);
   });
 
-  it('weigert sich, wenn der Standardkalender ein geteilter Kalender ist', async () => {
-    const s = new CalendarWriteService({ ...cfg, defaultCalendar: 'Gemeinsam' }, store);
-    await expect(s.createEvent(base)).rejects.toThrow(/Standardkalender darf nicht geteilt sein/);
+  it('refuses when the default calendar is a shared calendar', async () => {
+    const s = new CalendarWriteService({ ...cfg, defaultCalendar: 'Shared' }, store);
+    await expect(s.createEvent(base)).rejects.toThrow(/default calendar must not be shared/);
     expect(store.creates).toBe(0);
   });
 
-  it('schreibt nirgends hin, wenn weder Kalender noch Standardkalender bekannt sind', async () => {
+  it('writes nowhere when neither a calendar nor a default calendar is known', async () => {
     const s = new CalendarWriteService({ ...cfg, defaultCalendar: undefined }, store);
-    await expect(s.createEvent(base)).rejects.toThrow(/Kein Kalender angegeben/);
+    await expect(s.createEvent(base)).rejects.toThrow(/No calendar specified/);
     expect(store.creates).toBe(0);
   });
 
   it.each([
-    ['Feiertage', /abonniert/],
-    ['Nur lesen', /schreibgeschützt/],
-    ['Familie', /Aufgabenliste/],
-    ['Gibtsnicht', /nicht gefunden/],
-  ])('lehnt "%s" ab', async (name, msg) => {
+    ['Holidays', /subscribed/],
+    ['Read only', /read-only/],
+    ['Family', /tasks list/],
+    ['DoesNotExist', /not found/],
+  ])('refuses "%s"', async (name, msg) => {
     await expect(svc.createEvent({ ...base, calendar: name })).rejects.toThrow(msg);
     await expect(svc.createEvent({ ...base, sharedCalendar: name })).rejects.toThrow();
     expect(store.creates).toBe(0);
   });
 });
 
-describe('Keine Einladungen', () => {
-  it('Schema akzeptiert keine Teilnehmer- oder Organisator-Felder', () => {
+describe('No invitations', () => {
+  it('schema accepts no attendee or organizer fields', () => {
     const ok = createEventSchema.safeParse({ title: 'x', start: '2026-10-20T14:00:00' });
     expect(ok.success).toBe(true);
     for (const field of ['attendees', 'attendee', 'organizer', 'invitees', 'method']) {
@@ -87,8 +87,8 @@ describe('Keine Einladungen', () => {
     }
   });
 
-  it('eingeschleuste Teilnehmer in Textfeldern landen nicht im Termin', async () => {
-    const evil = 'Hi\r\nATTENDEE;CN=X:mailto:opfer@example.com\r\nORGANIZER:mailto:x@example.com';
+  it('attendees injected via text fields do not end up in the event', async () => {
+    const evil = 'Hi\r\nATTENDEE;CN=X:mailto:victim@example.com\r\nORGANIZER:mailto:x@example.com';
     await svc.createEvent({ ...base, title: evil, location: evil, notes: evil });
     const data = [...store.objects.values()][0]!.data;
     expect(data).not.toMatch(/^ATTENDEE/m);
@@ -97,36 +97,36 @@ describe('Keine Einladungen', () => {
   });
 });
 
-describe('Ändern', () => {
-  it('ändert einen eigenen Termin, erhält unbekannte Eigenschaften und erhöht den ETag', async () => {
+describe('Updating', () => {
+  it('updates an own event, keeps unknown properties and changes the ETag', async () => {
     const id = store.put('priv', 'a', ev('A'));
     const before = [...store.objects.values()][0]!;
-    const r = await svc.updateEvent({ id, etag: before.etag!, title: 'Neuer Titel' });
-    expect(r.event.title).toBe('Neuer Titel');
+    const r = await svc.updateEvent({ id, etag: before.etag!, title: 'New title' });
+    expect(r.event.title).toBe('New title');
     const after = [...store.objects.values()][0]!;
     expect(after.etag).not.toBe(before.etag);
     expect(after.data).toContain('X-APPLE-STRUCTURED-LOCATION');
-    expect(after.data).toContain('X-MEINE-ERWEITERUNG:wichtig');
+    expect(after.data).toContain('X-MY-EXTENSION:important');
     expect(after.data).toContain('DTSTART;TZID=Europe/Berlin:20261021T100000');
   });
 
-  it('lädt vor jeder Änderung den kompletten Termin per GET und nutzt keine Abfragekopie', async () => {
+  it('loads the complete event via GET before every change and uses no query copy', async () => {
     const id = store.put('priv', 'a', ev('A'));
     store.gets = 0;
     store.queries = 0;
-    await svc.updateEvent({ id, title: 'Neu' });
+    await svc.updateEvent({ id, title: 'New' });
     expect(store.gets).toBeGreaterThanOrEqual(1);
     expect(store.queries).toBe(0);
-    // Die Teilkopie aus einer Abfrage hätte die X-Eigenschaften verloren; geschrieben wurde das vollständige Original.
+    // The partial copy from a query would have lost the X- properties; the complete original was written.
     const stored = [...store.objects.values()][0]!.data;
-    expect(stored).toContain('X-MEINE-ERWEITERUNG:wichtig');
+    expect(stored).toContain('X-MY-EXTENSION:important');
     expect(stored).toContain('X-APPLE-STRUCTURED-LOCATION');
   });
 
-  it('erhöht SEQUENCE um eins und setzt LAST-MODIFIED neu', async () => {
-    const id = store.put('priv', 'a', ev('A')); // SEQUENCE:1, kein LAST-MODIFIED
+  it('increments SEQUENCE by one and sets LAST-MODIFIED anew', async () => {
+    const id = store.put('priv', 'a', ev('A')); // SEQUENCE:1, no LAST-MODIFIED
     const before = Date.now();
-    await svc.updateEvent({ id, title: 'Neu' });
+    await svc.updateEvent({ id, title: 'New' });
     const stored = [...store.objects.values()][0]!.data;
     expect(stored).toMatch(/^SEQUENCE:2$/m);
     const m = /^LAST-MODIFIED:(\d{8}T\d{6}Z)$/m.exec(stored);
@@ -136,86 +136,86 @@ describe('Ändern', () => {
     expect(t).toBeLessThanOrEqual(Date.now() + 2000);
   });
 
-  it('verschiebt mit nur "start" und behält die Dauer (90 Minuten)', async () => {
+  it('moves with only "start" and keeps the duration (90 minutes)', async () => {
     const id = store.put('priv', 'a', ev('A'));
     const r = await svc.updateEvent({ id, start: '2026-10-22T09:00:00' });
     expect(r.event.start).toBe('2026-10-22T09:00:00+02:00');
     expect(r.event.end).toBe('2026-10-22T10:30:00+02:00');
   });
 
-  it('lehnt Termine mit Teilnehmern ab und ändert nichts', async () => {
+  it('refuses events with attendees and changes nothing', async () => {
     const id = store.put('priv', 'a', ev('A', 'ATTENDEE;CN=X:mailto:x@example.com\r\nORGANIZER:mailto:me@example.com'));
-    await expect(svc.updateEvent({ id, title: 'x' })).rejects.toThrow(/Teilnehmer/);
+    await expect(svc.updateEvent({ id, title: 'x' })).rejects.toThrow(/attendees/);
     expect(store.updates).toBe(0);
   });
 
-  it('lehnt Termine mit fremdem Organisator ab, erlaubt den eigenen', async () => {
-    const foreign = store.put('priv', 'f', ev('F', 'ORGANIZER:mailto:chef@firma.de'));
-    await expect(svc.updateEvent({ id: foreign, title: 'x' })).rejects.toThrow(/anderen Person organisiert/);
+  it('refuses events organized by someone else, allows own ones', async () => {
+    const foreign = store.put('priv', 'f', ev('F', 'ORGANIZER:mailto:boss@company.example'));
+    await expect(svc.updateEvent({ id: foreign, title: 'x' })).rejects.toThrow(/organized by another person/);
     expect(store.updates).toBe(0);
     const own = store.put('priv', 'o', ev('O', 'ORGANIZER:mailto:ME@example.com'));
     await expect(svc.updateEvent({ id: own, title: 'x' })).resolves.toBeTruthy();
     expect(store.updates).toBe(1);
   });
 
-  it('verlangt für Termine in geteilten Kalendern die ausdrückliche Nennung', async () => {
-    const id = store.put('gemeinsam', 's', ev('S'));
-    await expect(svc.updateEvent({ id, title: 'x' })).rejects.toThrow(/shared_calendar="Gemeinsam"/);
-    await expect(svc.updateEvent({ id, title: 'x', sharedCalendar: 'Termine' })).rejects.toThrow(/shared_calendar="Gemeinsam"/);
+  it('requires explicit naming for events in shared calendars', async () => {
+    const id = store.put('shared', 's', ev('S'));
+    await expect(svc.updateEvent({ id, title: 'x' })).rejects.toThrow(/shared_calendar="Shared"/);
+    await expect(svc.updateEvent({ id, title: 'x', sharedCalendar: 'Events' })).rejects.toThrow(/shared_calendar="Shared"/);
     expect(store.updates).toBe(0);
-    const r = await svc.updateEvent({ id, title: 'x', sharedCalendar: 'Gemeinsam' });
+    const r = await svc.updateEvent({ id, title: 'x', sharedCalendar: 'Shared' });
     expect(r.shared).toBe(true);
     expect(store.updates).toBe(1);
   });
 
-  it('lehnt shared_calendar bei privatem Termin ab', async () => {
+  it('refuses shared_calendar for a private event', async () => {
     const id = store.put('priv', 'a', ev('A'));
-    await expect(svc.updateEvent({ id, title: 'x', sharedCalendar: 'Gemeinsam' })).rejects.toThrow(/kein geteilter Kalender/);
+    await expect(svc.updateEvent({ id, title: 'x', sharedCalendar: 'Shared' })).rejects.toThrow(/is not a shared calendar/);
   });
 
-  it('lehnt Änderungen an einzelnen Vorkommen ab, erlaubt die ganze Serie', async () => {
+  it('refuses changes to single occurrences, allows the whole series', async () => {
     const id = store.put('priv', 'r', ev('R', 'RRULE:FREQ=WEEKLY;COUNT=5'));
-    await expect(svc.updateEvent({ id, title: 'x', occurrenceStart: '2026-10-28T10:00:00+01:00' })).rejects.toThrow(/einzelnen Vorkommen/);
+    await expect(svc.updateEvent({ id, title: 'x', occurrenceStart: '2026-10-28T10:00:00+01:00' })).rejects.toThrow(/single occurrences/);
     expect(store.updates).toBe(0);
-    const r = await svc.updateEvent({ id, title: 'Ganze Serie' });
+    const r = await svc.updateEvent({ id, title: 'Whole series' });
     expect(r.event.recurring).toBe(true);
     expect(store.updates).toBe(1);
   });
 
-  it('ändert die Zeit einer Serie mit Ausnahmen nicht, wohl aber den Titel', async () => {
+  it('does not change the time of a series with exceptions, but does change the title', async () => {
     const id = store.put('priv', 'r', ev('R', 'RRULE:FREQ=WEEKLY;COUNT=5\r\nEXDATE;TZID=Europe/Berlin:20261028T100000'));
-    await expect(svc.updateEvent({ id, start: '2026-10-22T09:00:00' })).rejects.toThrow(/Ausnahmen/);
+    await expect(svc.updateEvent({ id, start: '2026-10-22T09:00:00' })).rejects.toThrow(/exceptions/);
     expect(store.updates).toBe(0);
     await expect(svc.updateEvent({ id, title: 'ok' })).resolves.toBeTruthy();
   });
 
-  it('lehnt ab, wenn der übergebene ETag nicht mehr passt', async () => {
+  it('refuses when the given ETag no longer matches', async () => {
     const id = store.put('priv', 'a', ev('A'));
-    await expect(svc.updateEvent({ id, etag: '"alt"', title: 'x' })).rejects.toThrow(/seit dem Abruf geändert/);
+    await expect(svc.updateEvent({ id, etag: '"old"', title: 'x' })).rejects.toThrow(/changed since it was fetched/);
     expect(store.updates).toBe(0);
   });
 
-  it('akzeptiert den ETag auch ohne Anführungszeichen oder mit W/, lehnt aber andere ab', async () => {
+  it('accepts the ETag without quotes or with W/, but refuses others', async () => {
     const id = store.put('priv', 'a', ev('A'));
-    const etag = [...store.objects.values()][0]!.etag!; // z. B. "e1" mit Anführungszeichen
+    const etag = [...store.objects.values()][0]!.etag!; // e.g. "e1" with quotes
     const bare = etag.replace(/"/g, '');
-    await expect(svc.updateEvent({ id, etag: bare, title: 'eins' })).resolves.toBeTruthy();
+    await expect(svc.updateEvent({ id, etag: bare, title: 'one' })).resolves.toBeTruthy();
     const next = [...store.objects.values()][0]!.etag!;
-    await expect(svc.updateEvent({ id, etag: `W/${next}`, title: 'zwei' })).resolves.toBeTruthy();
-    await expect(svc.updateEvent({ id, etag: bare, title: 'drei' })).rejects.toThrow(/seit dem Abruf geändert/);
+    await expect(svc.updateEvent({ id, etag: `W/${next}`, title: 'two' })).resolves.toBeTruthy();
+    await expect(svc.updateEvent({ id, etag: bare, title: 'three' })).rejects.toThrow(/changed since it was fetched/);
   });
 
-  it('lehnt ab, wenn der Termin zwischen Lesen und Schreiben von jemand anderem geändert wurde', async () => {
+  it('refuses when someone else changed the event between reading and writing', async () => {
     const id = store.put('priv', 'a', ev('A'));
     store.afterGet = (o) => {
-      // Dritter ändert den Termin direkt nach unserem Lesen
-      store.objects.set(o.url, { ...o, etag: '"von-dritten-geaendert"' });
+      // A third party changes the event right after we read it
+      store.objects.set(o.url, { ...o, etag: '"changed-by-third-party"' });
     };
-    await expect(svc.updateEvent({ id, title: 'x' })).rejects.toThrow(/inzwischen geändert/);
+    await expect(svc.updateEvent({ id, title: 'x' })).rejects.toThrow(/changed in the meantime/);
     expect(store.updates).toBe(0);
   });
 
-  it('schreibt nicht ohne ETag', async () => {
+  it('does not write without an ETag', async () => {
     const id = store.put('priv', 'a', ev('A'));
     store.objects.set([...store.objects.keys()][0]!, { url: [...store.objects.keys()][0]!, data: ev('A') });
     await expect(svc.updateEvent({ id, title: 'x' })).rejects.toThrow(/ETag/);
@@ -223,23 +223,23 @@ describe('Ändern', () => {
 
   it.each([
     ['https://evil.example.com/u/calendars/priv/a.ics'],
-    ['/u/calendars/priv/../gemeinsam/a.ics'],
+    ['/u/calendars/priv/../shared/a.ics'],
     ['/u/calendars/priv/a.txt'],
-    ['/andere/calendars/x/a.ics'],
-  ])('lehnt die ungültige ID %s ab', async (id) => {
+    ['/other/calendars/x/a.ics'],
+  ])('refuses the invalid ID %s', async (id) => {
     await expect(svc.updateEvent({ id, title: 'x' })).rejects.toThrow(/ID/);
     expect(store.updates).toBe(0);
   });
 
-  it('verlangt mindestens eine Änderung', async () => {
+  it('requires at least one change', async () => {
     const id = store.put('priv', 'a', ev('A'));
-    await expect(svc.updateEvent({ id })).rejects.toThrow(/Keine Änderung/);
+    await expect(svc.updateEvent({ id })).rejects.toThrow(/No change specified/);
   });
 });
 
-describe('Erkennung geteilter Kalender (im Zweifel geteilt)', () => {
+describe('Detecting shared calendars (shared when in doubt)', () => {
   const me = '/123/principal/';
-  it('privat nur bei eigenem Eigentümer ohne Freigabe-Merkmale', () => {
+  it('private only with own owner and no sharing markers', () => {
     expect(classifyCalendar({ resourcetype: { calendar: {} }, owner: { href: me }, currentUserPrivilegeSet: { privilege: [{ write: {} }] } }, me)).toMatchObject({ shared: false, writable: true });
   });
   it.each([
@@ -247,29 +247,29 @@ describe('Erkennung geteilter Kalender (im Zweifel geteilt)', () => {
     ['shared', { resourcetype: { calendar: {}, shared: {} }, owner: me }],
     ['invite', { resourcetype: { calendar: {} }, owner: me, invite: {} }],
     ['sharedUrl', { resourcetype: { calendar: {} }, owner: me, sharedUrl: 'x' }],
-    ['fremder Eigentümer', { resourcetype: { calendar: {} }, owner: '/999/principal/' }],
-    ['kein Eigentümer erkennbar', { resourcetype: { calendar: {} } }],
-  ])('%s gilt als geteilt', (_n, props) => {
+    ['foreign owner', { resourcetype: { calendar: {} }, owner: '/999/principal/' }],
+    ['no recognizable owner', { resourcetype: { calendar: {} } }],
+  ])('%s counts as shared', (_n, props) => {
     expect(classifyCalendar(props, me).shared).toBe(true);
   });
-  it('gilt als geteilt, wenn der eigene Account unbekannt ist', () => {
+  it('counts as shared when the own account is unknown', () => {
     expect(classifyCalendar({ resourcetype: { calendar: {} }, owner: me }, '').shared).toBe(true);
   });
-  it('abonnierte Kalender sind nicht beschreibbar', () => {
+  it('subscribed calendars are not writable', () => {
     expect(classifyCalendar({ resourcetype: { calendar: {}, subscribed: {} }, owner: me }, me).subscribed).toBe(true);
   });
 });
 
-describe('Schreiben nur mit Freigabe', () => {
-  it('das echte Gateway lehnt gefälschte Freigaben ab, bevor etwas gesendet wird', async () => {
+describe('Writing only with a grant', () => {
+  it('the real gateway refuses forged grants before anything is sent', async () => {
     const gw = new CalDavGateway(cfg);
     const forged = { op: 'create', calendar: calendars[0] } as never;
-    await expect(gw.createObject(forged, 'ABCDEFGH-1234.ics', 'x')).rejects.toThrow(/ohne Freigabe/);
-    await expect(gw.updateObject({ op: 'update', calendar: calendars[0] } as never, { url: 'https://x/', etag: '"1"', data: 'x' })).rejects.toThrow(/ohne Freigabe/);
+    await expect(gw.createObject(forged, 'ABCDEFGH-1234.ics', 'x')).rejects.toThrow(/without grant/);
+    await expect(gw.updateObject({ op: 'update', calendar: calendars[0] } as never, { url: 'https://x/', etag: '"1"', data: 'x' })).rejects.toThrow(/without grant/);
   });
 });
 
-describe('Löschen, Senden und Verschieben im Code: nur die zwei erlaubten Wege', () => {
+describe('Deleting, sending and moving in the code: only the two allowed paths', () => {
   const files = (dir: string): string[] =>
     readdirSync(dir).flatMap((f) => {
       const p = join(dir, f);
@@ -279,25 +279,25 @@ describe('Löschen, Senden und Verschieben im Code: nur die zwei erlaubten Wege'
   const src = files('src').map((f) => ({ f: f.split('\\').join('/'), text: readFileSync(f, 'utf8') }));
   const code = src.map(({ f, text }) => ({ f, code: strip(text) }));
 
-  it('nur delete_event und trash_message tragen Lösch-/Verschiebe-Namen, sonst gibt es kein Werkzeug dieser Art', () => {
+  it('only delete_event and trash_message have delete/move names; there is no other tool of this kind', () => {
     const names = src.flatMap(({ text }) => [...text.matchAll(/registerTool\(\s*'([^']+)'/g)].map((m) => m[1]!));
     expect(names).toEqual(expect.arrayContaining(['list_calendars', 'list_events', 'search_events', 'find_free_slots', 'create_event', 'update_event', 'search_contacts', 'get_contact', 'delete_event', 'trash_message']));
     const risky = names.filter((n) => /delete|remove|cancel|send|move|mark|flag|archive|trash|expunge|forward|reply/i.test(n));
     expect(risky.sort()).toEqual(['delete_event', 'trash_message']);
   });
 
-  it('verbotene Funktionen kommen im Code nirgends vor (kein Senden, kein Löschen von Kontakten, keine Flags, kein EXPUNGE, kein Rückfall auf COPY)', () => {
+  it('forbidden functions appear nowhere in the code (no sending, no deleting contacts, no flags, no EXPUNGE, no COPY fallback)', () => {
     const forbidden = [
       /deleteCalendarObject/, /deleteVCard/, /createVCard/, /updateVCard/,
       /createTransport/, /sendMail/, /from 'nodemailer'/, /smtp/i,
       /messageDelete/, /messageCopy/, /messageFlags(Add|Remove|Set)/, /\.setFlagColor/, /mailboxDelete/, /mailboxRename/, /\.expunge/i, /\bEXPUNGE\b/,
     ];
     for (const { f, code: c } of code) for (const re of forbidden) expect(c, `${f}: ${re}`).not.toMatch(re);
-    // Das Merkmal \\Deleted kommt nur im Beschreibungstext des Werkzeugs vor ("setzt es nicht"), nie im übrigen Code.
+    // The \\Deleted flag only appears in the tool description ("does not set it"), never in the rest of the code.
     for (const { f, code: c } of code) if (f !== 'src/mcp/trashTools.ts') expect(c, `${f}: \\Deleted`).not.toMatch(/\\+Deleted/);
   });
 
-  it('Termine werden nur im CalDAV-Gateway gelöscht (ein einziges DELETE) und nur über deleteObject', () => {
+  it('events are deleted only in the CalDAV gateway (a single DELETE) and only via deleteObject', () => {
     for (const { f, code: c } of code) {
       const allowedFile = f === 'src/core/calendar/caldav.ts';
       expect(/method:\s*'DELETE'/.test(c), `${f}: DELETE`).toBe(allowedFile);
@@ -306,50 +306,50 @@ describe('Löschen, Senden und Verschieben im Code: nur die zwei erlaubten Wege'
     }
     const caldav = code.find((x) => x.f === 'src/core/calendar/caldav.ts')!.code;
     expect(caldav.match(/method:\s*'DELETE'/g)).toHaveLength(1);
-    // Das einzige DELETE steht in deleteObject, hinter der Prüfung der Freigabe.
+    // The only DELETE is in deleteObject, after the grant check.
     const body = caldav.slice(caldav.indexOf('async deleteObject'));
     expect(body.indexOf("WriteGrant.isValid(grant, 'delete')")).toBeGreaterThan(-1);
     expect(body.indexOf("WriteGrant.isValid(grant, 'delete')")).toBeLessThan(body.indexOf("method: 'DELETE'"));
   });
 
-  it('Mails werden nur in moveToTrash verschoben: direktes UID MOVE, nie imapflow.messageMove (dessen Rückfall wäre COPY + Löschen-Markierung + EXPUNGE)', () => {
+  it('mails are moved only in moveToTrash: direct UID MOVE, never imapflow.messageMove (its fallback would be COPY + deleted flag + EXPUNGE)', () => {
     for (const { f, code: c } of code) {
       expect(/messageMove/.test(c), `${f}: messageMove`).toBe(false);
-      // Rohe IMAP-Befehle (exec('GROSSBUCHSTABEN', …)) gibt es nur in imap.ts; RegExp.exec ist etwas anderes.
-      expect(/\bexec\(\s*'[A-Z]/.test(c), `${f}: exec mit IMAP-Befehl`).toBe(f === 'src/core/mail/imap.ts');
+      // Raw IMAP commands (exec('UPPERCASE', …)) exist only in imap.ts; RegExp.exec is something else.
+      expect(/\bexec\(\s*'[A-Z]/.test(c), `${f}: exec with IMAP command`).toBe(f === 'src/core/mail/imap.ts');
     }
     const imap = code.find((x) => x.f === 'src/core/mail/imap.ts')!.code;
-    expect([...imap.matchAll(/exec\(\s*'([A-Z][^']*)'/g)].map((m) => m[1])).toEqual(['UID MOVE']); // genau ein Aufruf
+    expect([...imap.matchAll(/exec\(\s*'([A-Z][^']*)'/g)].map((m) => m[1])).toEqual(['UID MOVE']); // exactly one call
     const fn = imap.slice(imap.indexOf('async moveToTrash'), imap.indexOf('async close'));
     expect(fn).toContain("TrashGrant.isValid(grant)");
     expect(fn.indexOf('TrashGrant.isValid(grant)')).toBeLessThan(fn.indexOf("w.exec('UID MOVE'"));
-    // Die schmale Lese-Schnittstelle kennt keine verändernden Methoden.
+    // The narrow read interface has no mutating methods.
     const like = imap.slice(imap.indexOf('export interface ImapLike'), imap.indexOf('interface ImapAppend'));
     expect(like).not.toMatch(/messageMove|messageDelete|append|messageFlags|store\(|exec\(/);
   });
 
-  it('Dateien werden nur im Sicherungsspeicher entfernt', () => {
+  it('files are removed only in the backup store', () => {
     for (const { f, code: c } of code) {
-      expect(/\b(unlink|unlinkSync|rmdir|rmSync)\b|\brm\(/.test(c), `${f}: Datei entfernen`).toBe(f === 'src/core/calendar/backup.ts');
+      expect(/\b(unlink|unlinkSync|rmdir|rmSync)\b|\brm\(/.test(c), `${f}: file removal`).toBe(f === 'src/core/calendar/backup.ts');
     }
   });
 
-  it('die Speicher-Schnittstelle kennt als Löschen nur deleteObject', () => {
+  it('the store interface has deleteObject as its only delete method', () => {
     const types = readFileSync('src/core/calendar/types.ts', 'utf8');
     const hits = [...strip(types).matchAll(/\b\w*(delete|remove)\w*\b/gi)].map((m) => m[0]);
     expect(hits).toEqual(['deleteObject']);
   });
 
-  it('die Lese-Schnittstelle für Mail hat weiterhin keine verändernde Methode', () => {
+  it('the mail read interface still has no mutating method', () => {
     const types = readFileSync('src/core/mail/types.ts', 'utf8');
-    const reader = types.slice(types.indexOf('export interface MailReader'), types.indexOf('/** Ablegen von Entwürfen'));
+    const reader = types.slice(types.indexOf('export interface MailReader'), types.indexOf('/** Draft storage'));
     expect(reader).not.toMatch(/delete|remove|move|trash|flag|store|append/i);
   });
 
-  it('Gateways lehnen gefälschte Löschfreigaben ab, bevor etwas gesendet wird', async () => {
+  it('gateways refuse forged delete grants before anything is sent', async () => {
     const gw = new CalDavGateway(cfg);
-    await expect(gw.deleteObject({ op: 'delete', calendar: calendars[0] } as never, { url: 'https://p1.example.com/u/calendars/priv/a.ics', etag: '"1"' })).rejects.toThrow(/ohne Freigabe/);
+    await expect(gw.deleteObject({ op: 'delete', calendar: calendars[0] } as never, { url: 'https://p1.example.com/u/calendars/priv/a.ics', etag: '"1"' })).rejects.toThrow(/without grant/);
     const update = { op: 'update', calendar: calendars[0] } as never;
-    await expect(gw.deleteObject(update, { url: 'https://p1.example.com/u/calendars/priv/a.ics', etag: '"1"' })).rejects.toThrow(/ohne Freigabe/);
+    await expect(gw.deleteObject(update, { url: 'https://p1.example.com/u/calendars/priv/a.ics', etag: '"1"' })).rejects.toThrow(/without grant/);
   });
 });

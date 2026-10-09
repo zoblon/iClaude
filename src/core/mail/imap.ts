@@ -6,20 +6,20 @@ import { encodeRef } from './ref.js';
 import { DraftGrant, TrashGrant } from '../permissions.js';
 import type { Address, DraftStore, MailboxInfo, MailReader, MailTrasher, MessageRef, MessageSummary, SearchCriteria } from './types.js';
 
-/** Größte Entwurfsdatei, die abgelegt wird. */
+/** Largest draft that will be stored. */
 const MAX_DRAFT_BYTES = 1_000_000;
 const OP_TIMEOUT_MS = 40_000;
 const CONNECT_TIMEOUT_MS = 20_000;
-/** Größte Nachricht, die geladen wird (Rohtext inklusive Anhänge). */
+/** Largest message that will be loaded (raw source including attachments). */
 const MAX_SOURCE_BYTES = 3_000_000;
 
-/** Wie viele Nachrichten höchstens je Ordner im Detail abgefragt werden. */
+/** Maximum number of messages per folder fetched in detail. */
 const DETAIL_CAP = 100;
 
 /* ------------------------------------------------------------------ */
-/* Schmale, rein lesende Sicht auf imapflow.                            */
-/* Was hier nicht steht, kann der Code nicht aufrufen: keine Flags      */
-/* setzen, kein Löschen, Verschieben, Kopieren, Anlegen, Anhängen.      */
+/* Narrow, read-only view of imapflow.                                 */
+/* What is not listed here cannot be called by the code: no setting    */
+/* flags, no deleting, moving, copying, creating or appending.         */
 /* ------------------------------------------------------------------ */
 
 interface EnvelopeAddress {
@@ -91,25 +91,25 @@ export interface ImapLike {
   close(): void;
   logout(): Promise<void>;
   list(opts: { statusQuery: { messages: true; unseen: true } }): Promise<ListEntry[]>;
-  /** Öffnet ausschließlich schreibgeschützt (IMAP EXAMINE). */
+  /** Opens read-only only (IMAP EXAMINE). */
   getMailboxLock(path: string, opts: { readOnly: true }): Promise<{ release(): void }>;
   fetch(range: string, query: FetchQuery, opts?: { uid?: boolean }): AsyncIterable<ImapMessage>;
   fetchOne(seq: string, query: FetchQuery, opts?: { uid?: boolean }): Promise<ImapMessage | false>;
   search(query: SearchQuery, opts?: { uid?: boolean }): Promise<number[] | false>;
 }
 
-/** Nur für das Ablegen von Entwürfen (IMAP APPEND). Wird ausschließlich von appendDraft genutzt. */
+/** Only for storing drafts (IMAP APPEND). Used exclusively by appendDraft. */
 interface ImapAppend {
   append(path: string, content: Buffer, flags: string[], idate?: Date): Promise<false | { destination: string; uid?: number; uidValidity?: bigint }>;
 }
 
 /**
- * Nur für das Verschieben in den Papierkorb (IMAP UID MOVE). Wird ausschließlich von moveToTrash genutzt.
- * Hier steht absichtlich nichts, womit sich Flags setzen oder Nachrichten endgültig entfernen ließen.
+ * Only for moving to the Trash (IMAP UID MOVE). Used exclusively by moveToTrash.
+ * Deliberately contains nothing that could set flags or permanently remove messages.
  *
- * UID MOVE wird bewusst direkt gesendet (exec) und nicht über imapflow.messageMove: Das weicht ohne angebotene MOVE-Fähigkeit
- * stillschweigend auf COPY + \\Deleted + EXPUNGE aus. iCloud bietet MOVE nicht an, versteht UID MOVE aber (live gemessen).
- * Lehnt der Server den Befehl ab, wird abgebrochen. Einen Rückfall gibt es nicht.
+ * UID MOVE is deliberately sent directly (exec) and not via imapflow.messageMove: without an advertised MOVE capability,
+ * that silently falls back to COPY + \\Deleted + EXPUNGE. iCloud does not advertise MOVE but understands UID MOVE (verified live).
+ * If the server rejects the command, the operation is aborted. There is no fallback.
  */
 interface ImapMove {
   getMailboxLock(path: string, opts: { readOnly: false }): Promise<{ release(): void }>;
@@ -140,7 +140,7 @@ const ROLE_BY_USE: Record<string, string> = {
   '\\Trash': 'trash',
 };
 
-/** Merkmal des Ordners aus der Serverliste (unabhängig davon, ob der Server SPECIAL-USE anbietet; imapflow würde sonst nach Namen raten). */
+/** Folder attribute from the server's LIST response (regardless of whether the server advertises SPECIAL-USE; otherwise imapflow would guess by name). */
 function roleFromFlags(flags: Set<string> | undefined): string | undefined {
   if (!flags) return undefined;
   for (const f of flags) {
@@ -168,7 +168,7 @@ const asDate = (d: Date | string | undefined): string => {
   return Number.isNaN(t.getTime()) ? '' : t.toISOString();
 };
 
-/** Message-IDs ohne spitze Klammern. */
+/** Message-IDs without angle brackets. */
 const stripId = (s: string) => s.trim().replace(/^<|>$/g, '');
 
 function parseReferences(headers: Buffer | undefined): string[] {
@@ -184,7 +184,7 @@ function summarize(m: ImapMessage, path: string, uidValidity: string): MessageSu
   return {
     id: encodeRef({ path, uidValidity, uid: m.uid }),
     mailbox: path,
-    subject: clip(e.subject ?? '', 300) || '(ohne Betreff)',
+    subject: clip(e.subject ?? '', 300) || '(no subject)',
     from: mapAddresses(e.from),
     to: mapAddresses(e.to),
     cc: mapAddresses(e.cc),
@@ -213,12 +213,12 @@ const isConnectionError = (e: unknown): boolean => {
 const containsCI = (hay: string, needle: string) => hay.toLowerCase().includes(needle.toLowerCase());
 const addrText = (a: Address[]) => a.map((x) => `${x.name ?? ''} ${x.address ?? ''}`).join(' ');
 
-/** Prüft die Kriterien lokal gegen eine Zusammenfassung (für den Ausgleich der Serversuche). */
+/** Checks the criteria locally against a summary (to compensate for gaps in the server search). */
 function matchesLocally(s: MessageSummary, c: SearchCriteria): boolean {
   if (c.from && !containsCI(addrText(s.from), c.from)) return false;
   if (c.to && !containsCI(addrText([...s.to, ...s.cc]), c.to)) return false;
   if (c.subject && !containsCI(s.subject, c.subject)) return false;
-  // Volltext: Der Inhalt lässt sich lokal nicht prüfen, aber die decodierten Kopfzeilen (Betreff, Absender, Empfänger).
+  // Full text: the body cannot be checked locally, but the decoded headers (subject, sender, recipients) can.
   if (c.text && !containsCI(`${s.subject} ${addrText(s.from)} ${addrText(s.to)} ${addrText(s.cc)}`, c.text)) return false;
   if (c.unreadOnly && !s.unread) return false;
   if (c.since || c.before) {
@@ -231,8 +231,8 @@ function matchesLocally(s: MessageSummary, c: SearchCriteria): boolean {
 }
 
 /**
- * Lesender IMAP-Zugriff auf iCloud-Mail. Eine Verbindung wird wiederverwendet, Vorgänge laufen nacheinander.
- * Postfächer werden nur mit EXAMINE (schreibgeschützt) geöffnet, Inhalte nur mit BODY.PEEK geholt.
+ * Read-only IMAP access to iCloud Mail. One connection is reused, operations run one after another.
+ * Mailboxes are only opened with EXAMINE (read-only), contents are only fetched with BODY.PEEK.
  */
 export class ImapGateway implements MailReader, DraftStore, MailTrasher {
   private client?: ImapLike;
@@ -249,7 +249,7 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
     try {
       c?.close();
     } catch {
-      /* schon geschlossen */
+      /* already closed */
     }
   }
 
@@ -262,15 +262,15 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
       if (this.client === c) this.client = undefined;
     });
     try {
-      await withTimeout(c.connect(), CONNECT_TIMEOUT_MS, 'der Anmeldung bei iCloud-Mail');
+      await withTimeout(c.connect(), CONNECT_TIMEOUT_MS, 'signing in to iCloud Mail');
     } catch (e) {
       try {
         c.close();
       } catch {
-        /* ignorieren */
+        /* ignore */
       }
       if ((e as { authenticationFailed?: boolean } | undefined)?.authenticationFailed) {
-        throw new UserError('Anmeldung bei iCloud-Mail fehlgeschlagen. Die iCloud-Mailadresse (@icloud.com) und das App-spezifische Passwort in den Einstellungen der Extension prüfen.');
+        throw new UserError('Sign-in to iCloud Mail failed. Check the iCloud mail address (@icloud.com) and the app-specific password in the extension settings.');
       }
       throw e;
     }
@@ -278,7 +278,7 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
     return c;
   }
 
-  /** Führt einen Vorgang mit der gemeinsamen Verbindung aus (nacheinander, mit einem Neuversuch bei Verbindungsabbruch). */
+  /** Runs an operation on the shared connection (sequentially, with one retry if the connection drops). */
   private async run<T>(what: string, fn: (c: ImapLike) => Promise<T>, retry = true): Promise<T> {
     const prev = this.chain;
     let release!: () => void;
@@ -290,7 +290,7 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
         try {
           return await withTimeout(fn(c), OP_TIMEOUT_MS, what);
         } catch (e) {
-          if (e instanceof UserError && /Zeitüberschreitung/.test(e.message)) this.drop();
+          if (e instanceof UserError && /timed? ?out/i.test(e.message)) this.drop();
           else if (isConnectionError(e)) this.drop();
           if (retry && attempt === 0 && isConnectionError(e)) {
             log('imap-reconnect');
@@ -310,11 +310,11 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
       lock = await c.getMailboxLock(path, { readOnly: true });
     } catch (e) {
       if (isConnectionError(e)) throw e;
-      throw new UserError(`Der Ordner "${clip(path, 100)}" konnte nicht geöffnet werden. Mit list_mailboxes die vorhandenen Ordner prüfen.`);
+      throw new UserError(`Could not open the folder "${clip(path, 100)}". Use list_mailboxes to check the available folders.`);
     }
     try {
       const mb = c.mailbox;
-      if (!mb) throw new UserError('Der Ordner konnte nicht geöffnet werden.');
+      if (!mb) throw new UserError('Could not open the folder.');
       return await fn(String(mb.uidValidity), mb.exists);
     } finally {
       lock.release();
@@ -322,7 +322,7 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
   }
 
   async listMailboxes(): Promise<MailboxInfo[]> {
-    return this.run('dem Laden der Ordner', async (c) => {
+    return this.run('loading the folders', async (c) => {
       const entries = await c.list({ statusQuery: { messages: true, unseen: true } });
       return entries
         .filter((e) => !e.flags?.has('\\Noselect') && !e.flags?.has('\\NonExistent'))
@@ -343,7 +343,7 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
   }
 
   async listRecent(path: string, count: number): Promise<MessageSummary[]> {
-    return this.run('dem Laden der Nachrichten', (c) =>
+    return this.run('loading the messages', (c) =>
       this.inMailbox(c, path, async (uv, exists) => {
         if (!exists) return [];
         const from = Math.max(1, exists - count + 1);
@@ -355,7 +355,7 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
   }
 
   async search(path: string, crit: SearchCriteria, caps: { limit: number; localPass: number }): Promise<{ total: number; messages: MessageSummary[] }> {
-    return this.run(`der Suche in "${clip(path, 60)}"`, (c) =>
+    return this.run(`searching "${clip(path, 60)}"`, (c) =>
       this.inMailbox(c, path, async (uv, exists) => {
         const q: SearchQuery = {};
         if (crit.from) q.from = crit.from;
@@ -375,8 +375,8 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
         }
         let total = found.length;
 
-        // iCloud findet MIME-kodierte Betreffs und kurze Suchbegriffe serverseitig nicht immer (auch nicht bei TEXT).
-        // Ausgleich: die neuesten Nachrichten mit decodierten Kopfzeilen lokal prüfen.
+        // iCloud's server-side search does not always find MIME-encoded subjects or short search terms (not even with TEXT).
+        // Workaround: check the newest messages locally against their decoded headers.
         const localEligible = crit.from || crit.to || crit.subject || crit.text;
         if (localEligible && caps.localPass > 0 && byUid.size < caps.limit && exists > 0) {
           const from = Math.max(1, exists - caps.localPass + 1);
@@ -395,14 +395,14 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
   }
 
   async fetchSource(ref: MessageRef): Promise<{ source: Buffer; summary: MessageSummary; truncated: boolean }> {
-    return this.run('dem Laden der Nachricht', (c) =>
+    return this.run('loading the message', (c) =>
       this.inMailbox(c, ref.path, async (uv) => {
         if (uv !== ref.uidValidity) {
-          throw new UserError('Die Nachrichten-ID ist veraltet (der Ordner wurde neu aufgebaut). Bitte die Nachricht mit list_recent oder search_messages neu suchen.');
+          throw new UserError('The message ID is stale (the folder was rebuilt). Please find the message again with list_recent or search_messages.');
         }
         const m = await c.fetchOne(String(ref.uid), { ...LIST_QUERY, source: { maxLength: MAX_SOURCE_BYTES } }, { uid: true });
         if (!m || !m.source) {
-          throw new UserError('Nachricht nicht gefunden. Sie wurde möglicherweise verschoben oder gelöscht; bitte mit search_messages neu suchen.');
+          throw new UserError('Message not found. It may have been moved or deleted; please search again with search_messages.');
         }
         return { source: m.source, summary: summarize(m, ref.path, uv), truncated: (m.size ?? 0) > MAX_SOURCE_BYTES };
       }),
@@ -412,11 +412,11 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
   async findRelated(path: string, ids: string[], limit: number): Promise<MessageSummary[]> {
     const clean = [...new Set(ids.map(stripId).filter(Boolean))].slice(0, 30);
     if (!clean.length) return [];
-    return this.run(`der Konversationssuche in "${clip(path, 60)}"`, (c) =>
+    return this.run(`searching the conversation in "${clip(path, 60)}"`, (c) =>
       this.inMailbox(c, path, async (uv) => {
         const uids = new Set<number>();
         for (const id of clean) {
-          // iCloud findet Kopfzeilen nur, wenn die Message-ID mit den spitzen Klammern gesucht wird (ohne: stillschweigend 0 Treffer).
+          // iCloud only finds headers if the Message-ID is searched with angle brackets (without them: silently 0 hits).
           const b = `<${id}>`;
           const hits = await c.search(
             { or: [{ header: { 'message-id': b } }, { header: { 'in-reply-to': b } }, { header: { references: b } }] },
@@ -435,19 +435,19 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
   }
 
   /**
-   * Legt einen Entwurf im Entwürfe-Ordner ab (IMAP APPEND mit den Flags \\Seen und \\Draft, wie Apple Mail es bei eigenen Entwürfen tut). Das ist die einzige schreibende Mail-Operation.
-   * Ohne Wiederholung bei Verbindungsabbruch, damit nie zwei Entwürfe entstehen.
+   * Stores a draft in the Drafts folder (IMAP APPEND with the flags \\Seen and \\Draft, as Apple Mail does for its own drafts). This is the only mail operation that writes.
+   * No retry if the connection drops, so that two drafts are never created.
    */
   async appendDraft(grant: DraftGrant, raw: Buffer): Promise<{ mailbox: string; id?: string }> {
-    if (!DraftGrant.isValid(grant)) throw new Error('Schreibzugriff ohne Freigabe');
-    if (raw.length > MAX_DRAFT_BYTES) throw new UserError('Der Entwurf ist zu groß. Bitte den Text kürzen.');
+    if (!DraftGrant.isValid(grant)) throw new Error('Write access without a grant');
+    if (raw.length > MAX_DRAFT_BYTES) throw new UserError('The draft is too large. Please shorten the text.');
     return this.run(
-      'dem Ablegen des Entwurfs',
+      'storing the draft',
       async (c) => {
         const w = c as unknown as Partial<ImapAppend>;
-        if (typeof w.append !== 'function') throw new Error('append nicht verfügbar');
+        if (typeof w.append !== 'function') throw new Error('append not available');
         const r = await w.append(grant.mailbox, raw, ['\\Seen', '\\Draft'], new Date());
-        if (!r) throw new UserError('iCloud hat den Entwurf nicht angenommen. Bitte später erneut versuchen.');
+        if (!r) throw new UserError('iCloud did not accept the draft. Please try again later.');
         return {
           mailbox: grant.mailbox,
           ...(r.uid !== undefined && r.uidValidity !== undefined ? { id: encodeRef({ path: grant.mailbox, uidValidity: String(r.uidValidity), uid: r.uid }) } : {}),
@@ -457,11 +457,11 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
     );
   }
 
-  /** Zusammenfassungen (Betreff, Absender, …) zu bestimmten Nachrichten; Ordner werden schreibgeschützt geöffnet, es wird nichts als gelesen markiert. */
+  /** Summaries (subject, sender, …) of specific messages; folders are opened read-only, nothing is marked as read. */
   async summaries(refs: MessageRef[]): Promise<Array<MessageSummary | undefined>> {
     const out: Array<MessageSummary | undefined> = refs.map(() => undefined);
     for (const [path, group] of groupByPath(refs)) {
-      await this.run('dem Prüfen der Nachrichten', (c) =>
+      await this.run('checking the messages', (c) =>
         this.inMailbox(c, path, async (uv) => {
           for (const { ref } of group) assertCurrent(uv, ref);
           const byUid = new Map<number, MessageSummary>();
@@ -474,38 +474,38 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
   }
 
   /**
-   * Verschiebt Nachrichten in den Papierkorb (IMAP UID MOVE). Das ist die einzige Operation, die Nachrichten aus einem Ordner entfernt.
-   * Nie \\Deleted, nie EXPUNGE, kein Rückfall auf COPY: Lehnt der Server UID MOVE ab, passiert nichts.
-   * Ohne Wiederholung bei Verbindungsabbruch.
+   * Moves messages to the Trash (IMAP UID MOVE). This is the only operation that removes messages from a folder.
+   * Never \\Deleted, never EXPUNGE, no fallback to COPY: if the server rejects UID MOVE, nothing happens.
+   * No retry if the connection drops.
    */
   async moveToTrash(grant: TrashGrant, refs: MessageRef[]): Promise<{ trash: string; moved: number }> {
-    if (!TrashGrant.isValid(grant)) throw new Error('Schreibzugriff ohne Freigabe');
-    if (refs.length === 0 || refs.length > grant.count) throw new Error('Anzahl passt nicht zur Freigabe');
-    for (const ref of refs) if (!grant.sources.has(ref.path) || ref.path === grant.trash) throw new Error('Ordner nicht freigegeben');
-    // Der Zielname wird als gequoteter Text gesendet; iCloud nennt den Papierkorb "Deleted Messages". Ungewöhnliche Namen werden abgelehnt.
+    if (!TrashGrant.isValid(grant)) throw new Error('Write access without a grant');
+    if (refs.length === 0 || refs.length > grant.count) throw new Error('Count does not match the grant');
+    for (const ref of refs) if (!grant.sources.has(ref.path) || ref.path === grant.trash) throw new Error('Folder not granted');
+    // The target name is sent as a quoted string; iCloud calls the Trash "Deleted Messages". Unusual names are rejected.
     if (!/^[\x20-\x7e]{1,100}$/.test(grant.trash) || /["\\&]/.test(grant.trash)) {
-      throw new UserError('Der Name des Papierkorb-Ordners enthält Sonderzeichen, die dieser Konnektor nicht sicher übertragen kann. Es wurde nichts verschoben.');
+      throw new UserError('The name of the Trash folder contains special characters that this connector cannot transmit safely. Nothing was moved.');
     }
 
     let moved = 0;
     for (const [path, group] of groupByPath(refs)) {
       try {
         await this.run(
-          'dem Verschieben in den Papierkorb',
+          'moving to the Trash',
           async (c) => {
             const w = c as unknown as Partial<ImapMove>;
-            if (typeof w.exec !== 'function' || typeof w.getMailboxLock !== 'function') throw new Error('MOVE nicht verfügbar');
+            if (typeof w.exec !== 'function' || typeof w.getMailboxLock !== 'function') throw new Error('MOVE not available');
             const lock = await w.getMailboxLock(path, { readOnly: false });
             try {
               const mb = c.mailbox;
-              if (!mb) throw new UserError('Der Ordner konnte nicht geöffnet werden. Es wurde nichts verschoben.');
+              if (!mb) throw new UserError('Could not open the folder. Nothing was moved.');
               for (const { ref } of group) assertCurrent(String(mb.uidValidity), ref);
               try {
                 const res = await w.exec('UID MOVE', [{ type: 'SEQUENCE', value: group.map((g) => g.ref.uid).join(',') }, { type: 'STRING', value: grant.trash }], {});
                 res.next?.();
               } catch (e) {
                 if (isConnectionError(e)) throw e;
-                throw new UserError('iCloud hat das Verschieben in den Papierkorb (UID MOVE) abgelehnt. Es wurde nichts verschoben und nichts gelöscht. Bitte die Mail in Apple Mail in den Papierkorb legen.');
+                throw new UserError('iCloud rejected the move to the Trash (UID MOVE). Nothing was moved and nothing was deleted. Please move the mail to the Trash in Apple Mail.');
               }
             } finally {
               lock.release();
@@ -515,7 +515,7 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
         );
       } catch (e) {
         if (moved > 0) {
-          throw new UserError(`${moved} Mail(s) wurden bereits in den Papierkorb verschoben, die übrigen nicht: ${e instanceof UserError ? e.message : 'unerwarteter Fehler. Bitte den Papierkorb in Apple Mail prüfen.'}`);
+          throw new UserError(`${moved} mail(s) were already moved to the Trash, the rest were not: ${e instanceof UserError ? e.message : 'unexpected error. Please check the Trash in Apple Mail.'}`);
         }
         throw e;
       }
@@ -535,7 +535,7 @@ export class ImapGateway implements MailReader, DraftStore, MailTrasher {
   }
 }
 
-/** Für die Prüfung vor dem Verschieben reichen Kopfzeilen und Flags (kein Inhalt, nichts wird als gelesen markiert). */
+/** The check before moving only needs headers and flags (no content, nothing is marked as read). */
 const CHECK_QUERY: FetchQuery = { uid: true, flags: true, envelope: true, internalDate: true };
 
 function groupByPath(refs: MessageRef[]): Map<string, Array<{ ref: MessageRef; index: number }>> {
@@ -550,7 +550,7 @@ function groupByPath(refs: MessageRef[]): Map<string, Array<{ ref: MessageRef; i
 
 function assertCurrent(uidValidity: string, ref: MessageRef): void {
   if (uidValidity !== ref.uidValidity) {
-    throw new UserError('Die Nachrichten-ID ist veraltet (der Ordner wurde neu aufgebaut). Es wurde nichts verschoben. Bitte die Mail mit list_recent oder search_messages neu suchen.');
+    throw new UserError('The message ID is stale (the folder was rebuilt). Nothing was moved. Please find the mail again with list_recent or search_messages.');
   }
 }
 

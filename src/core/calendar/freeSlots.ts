@@ -18,18 +18,18 @@ export interface FreeSlotOptions {
   rangeStartMs: number;
   rangeEndMs: number;
   durationMinutes: number;
-  /** Tageszeitfenster "HH:MM". */
+  /** Daily time window "HH:MM". */
   dayStart: string;
   dayEnd: string;
   weekdaysOnly: boolean;
-  /** Zeitpunkte vor "jetzt" gelten nicht als frei. */
+  /** Times before "now" do not count as free. */
   nowMs: number;
   maxSlots: number;
 }
 
 function parseClock(s: string, label: string): { hour: number; minute: number } {
   const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(s.trim());
-  if (!m) throw new UserError(`${label} "${s}" ist ungültig. Erwartet: HH:MM, z. B. 09:00.`);
+  if (!m) throw new UserError(`${label} "${s}" is invalid. Expected: HH:MM, e.g. 09:00.`);
   return { hour: Number(m[1]), minute: Number(m[2]) };
 }
 
@@ -44,13 +44,13 @@ export function mergeIntervals(list: Interval[]): Interval[] {
   return out;
 }
 
-/** Freie Lücken von mindestens durationMinutes innerhalb des Tageszeitfensters. */
+/** Free gaps of at least durationMinutes within the daily time window. */
 export function findFreeSlots(busy: Interval[], o: FreeSlotOptions): { slots: FreeSlot[]; more: boolean } {
-  const from = parseClock(o.dayStart, 'Tagesbeginn');
-  const to = parseClock(o.dayEnd, 'Tagesende');
-  if (to.hour * 60 + to.minute <= from.hour * 60 + from.minute) throw new UserError('Das Tagesende muss nach dem Tagesbeginn liegen. Bitte day_end später als day_start wählen.');
+  const from = parseClock(o.dayStart, 'Day start');
+  const to = parseClock(o.dayEnd, 'Day end');
+  if (to.hour * 60 + to.minute <= from.hour * 60 + from.minute) throw new UserError('The day end must be after the day start. Please choose a day_end later than day_start.');
   const merged = mergeIntervals(busy);
-  // Angebotene Zeiten beginnen frühestens zur nächsten vollen 5 Minuten.
+  // Offered times start at the next full 5 minutes at the earliest.
   const nowRounded = Math.ceil(o.nowMs / 300_000) * 300_000;
   const minMs = o.durationMinutes * 60_000;
   const slots: FreeSlot[] = [];

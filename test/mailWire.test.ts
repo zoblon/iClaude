@@ -10,17 +10,17 @@ const msg = (uid: number, flags: string[], subject: string, mid: string, extra: 
   uid,
   flags,
   subject,
-  from: 'Anna Beispiel <anna@beispiel.de>',
+  from: 'Anna Example <anna@example.com>',
   messageId: `<${mid}>`,
   date: 'Wed, 07 Oct 2026 10:00:00 +0200',
   attachment,
-  raw: rfc822({ from: 'Anna Beispiel <anna@beispiel.de>', subject, messageId: `<${mid}>`, date: 'Wed, 07 Oct 2026 10:00:00 +0200', body: `Inhalt von ${subject}`, ...extra }),
+  raw: rfc822({ from: 'Anna Example <anna@example.com>', subject, messageId: `<${mid}>`, date: 'Wed, 07 Oct 2026 10:00:00 +0200', body: `Content of ${subject}`, ...extra }),
 });
 
 function encodedSubjectMessage(): MiniMessage {
   const subject = 'Rechnungsübersicht Oktober';
   const m = msg(1, ['\\Seen'], subject, 'enc1@x');
-  m.raw = rfc822({ from: 'Anna Beispiel <anna@beispiel.de>', subject: `=?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`, messageId: '<enc1@x>', date: 'Wed, 07 Oct 2026 10:00:00 +0200', body: 'Kein Treffer im Text' });
+  m.raw = rfc822({ from: 'Anna Example <anna@example.com>', subject: `=?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`, messageId: '<enc1@x>', date: 'Wed, 07 Oct 2026 10:00:00 +0200', body: 'No match in the text' });
   return m;
 }
 
@@ -30,14 +30,14 @@ let service: MailService;
 
 beforeAll(async () => {
   server = new MiniImap({
-    INBOX: { uidValidity: 1700, messages: [msg(1, [], 'Ungelesen eins', 'a1@x'), msg(2, [], 'Ungelesen zwei', 'a2@x', {}, true), msg(3, ['\\Seen'], 'Gelesen drei', 'a3@x', { inReplyTo: '<a1@x>', references: '<a1@x>' })] },
-    'Sent Messages': { special: '\\Sent', uidValidity: 1800, messages: [msg(1, ['\\Seen'], 'Re: Ungelesen eins', 'a4@x', { inReplyTo: '<a1@x>', references: '<a1@x>' })] },
+    INBOX: { uidValidity: 1700, messages: [msg(1, [], 'Unread one', 'a1@x'), msg(2, [], 'Unread two', 'a2@x', {}, true), msg(3, ['\\Seen'], 'Read three', 'a3@x', { inReplyTo: '<a1@x>', references: '<a1@x>' })] },
+    'Sent Messages': { special: '\\Sent', uidValidity: 1800, messages: [msg(1, ['\\Seen'], 'Re: Unread one', 'a4@x', { inReplyTo: '<a1@x>', references: '<a1@x>' })] },
     Drafts: { special: '\\Drafts', uidValidity: 1900, messages: [] },
-    // Betreff MIME-kodiert: im Rohtext steht nur Base64, der Server findet das Wort per TEXT-Suche nicht.
+    // MIME-encoded subject: the raw source only contains Base64, so the server's TEXT search does not find the word.
     Archive: { special: '\\Archive', uidValidity: 2000, messages: [encodedSubjectMessage()] },
   });
   await server.start();
-  // Echter imapflow-Client, verbunden mit dem Testserver (ohne TLS).
+  // Real imapflow client connected to the test server (without TLS).
   const factory = () =>
     new ImapFlow({ host: '127.0.0.1', port: server.port, secure: false, doSTARTTLS: false, auth: { user: 'u', pass: 'p' }, logger: false, disableAutoIdle: true }) as unknown as ImapLike;
   gateway = new ImapGateway(cfg, factory);
@@ -49,37 +49,37 @@ afterAll(async () => {
   await server.stop();
 });
 
-describe('Lesen verändert nichts (über die Leitung geprüft, echter imapflow gegen Testserver)', () => {
-  it('alle Lesewerkzeuge nacheinander: Flags bleiben exakt gleich', async () => {
+describe('Reading changes nothing (checked on the wire, real imapflow against the test server)', () => {
+  it('all read tools one after another: flags stay exactly the same', async () => {
     const before = JSON.stringify(server.flagsSnapshot());
     expect((await service.mailboxes()).map((m) => m.path)).toContain('INBOX');
     await service.unreadCounts();
     const recent = await service.listRecent('inbox', 10);
-    expect(recent.messages.map((m) => m.subject)).toEqual(expect.arrayContaining(['Ungelesen eins', 'Ungelesen zwei', 'Gelesen drei']));
-    await service.search({ subject: 'Ungelesen' });
+    expect(recent.messages.map((m) => m.subject)).toEqual(expect.arrayContaining(['Unread one', 'Unread two', 'Read three']));
+    await service.search({ subject: 'Unread' });
     await service.search({ unreadOnly: true });
-    const unread = recent.messages.find((m) => m.subject === 'Ungelesen zwei')!;
+    const unread = recent.messages.find((m) => m.subject === 'Unread two')!;
     const full = await service.getMessage(unread.id);
-    expect(full.text).toContain('Inhalt von Ungelesen zwei');
-    expect(full.attachments).toEqual([]); // Anhang nur in der Struktur des Testservers, nicht im Rohtext
+    expect(full.text).toContain('Content of Unread two');
+    expect(full.attachments).toEqual([]); // attachment only in the test server's body structure, not in the raw source
     await service.getThread(unread.id);
 
     expect(JSON.stringify(server.flagsSnapshot())).toBe(before);
     expect(server.violations).toEqual([]);
   });
 
-  it('die ungelesenen Nachrichten sind danach immer noch ungelesen', async () => {
+  it('the unread messages are still unread afterwards', async () => {
     const r = await service.listRecent('INBOX', 10);
-    expect(r.messages.filter((m) => m.unread).map((m) => m.subject).sort()).toEqual(['Ungelesen eins', 'Ungelesen zwei']);
+    expect(r.messages.filter((m) => m.unread).map((m) => m.subject).sort()).toEqual(['Unread one', 'Unread two']);
   });
 
-  it('jedes Postfach wird mit EXAMINE geöffnet, nie mit SELECT', () => {
+  it('every mailbox is opened with EXAMINE, never with SELECT', () => {
     const opens = server.commands.filter((c) => /^(SELECT|EXAMINE)\b/.test(c));
     expect(opens.length).toBeGreaterThan(3);
     expect(opens.every((c) => c.startsWith('EXAMINE'))).toBe(true);
   });
 
-  it('Inhalte werden nur mit BODY.PEEK geholt', () => {
+  it('contents are only fetched with BODY.PEEK', () => {
     const fetches = server.commands.filter((c) => /FETCH/.test(c));
     expect(fetches.some((c) => /BODY\.PEEK\[\]/.test(c))).toBe(true);
     for (const c of fetches) {
@@ -87,19 +87,19 @@ describe('Lesen verändert nichts (über die Leitung geprüft, echter imapflow g
     }
   });
 
-  it('es wird nie etwas verändert: kein STORE, COPY, MOVE, APPEND, EXPUNGE, DELETE, CREATE', () => {
+  it('nothing is ever changed: no STORE, COPY, MOVE, APPEND, EXPUNGE, DELETE, CREATE', () => {
     const sent = server.commands.map((c) => c.split(' ').slice(0, 2).join(' '));
     for (const verb of ['STORE', 'COPY', 'MOVE', 'APPEND', 'EXPUNGE', 'DELETE', 'CREATE', 'RENAME', 'SUBSCRIBE']) {
       expect(sent.filter((c) => new RegExp(`(^|\\s)${verb}$`).test(c)), verb).toEqual([]);
     }
   });
 
-  it('der Testserver hätte einen Verstoß bemerkt: nicht schreibgeschütztes Öffnen markiert als gelesen', async () => {
-    // Gegenprobe: Mit einem unvorsichtigen Client (SELECT, ohne PEEK) würde der Server das Flag setzen.
+  it('the test server would have noticed a violation: opening read-write marks as read', async () => {
+    // Counter-check: with a careless client (SELECT, without PEEK) the server would set the flag.
     const bad = new ImapFlow({ host: '127.0.0.1', port: server.port, secure: false, doSTARTTLS: false, auth: { user: 'u', pass: 'p' }, logger: false, disableAutoIdle: true });
     bad.on('error', () => undefined);
     await bad.connect();
-    const lock = await bad.getMailboxLock('INBOX'); // beschreibbar
+    const lock = await bad.getMailboxLock('INBOX'); // read-write
     try {
       const m = await bad.fetchOne('1', { uid: true, flags: true }, { uid: true });
       expect(m && m.flags && m.flags.has('\\Seen')).toBeFalsy();
@@ -108,46 +108,46 @@ describe('Lesen verändert nichts (über die Leitung geprüft, echter imapflow g
       await bad.logout();
     }
     expect(server.violations.some((v) => v.startsWith('SELECT'))).toBe(true);
-    server.violations.length = 0; // Gegenprobe zurücksetzen
+    server.violations.length = 0; // reset after the counter-check
   });
 });
 
-describe('Suche gleicht Schwächen der iCloud-Serversuche aus', () => {
-  it('findet ein Wort aus einem MIME-kodierten Betreff auch bei der Volltextsuche (TEXT)', async () => {
+describe('Search compensates for weaknesses of the iCloud server search', () => {
+  it('finds a word from a MIME-encoded subject even with full-text search (TEXT)', async () => {
     const raw = await gateway.search('Archive', { text: 'Oktober' }, { limit: 10, localPass: 0 });
-    expect(raw.total).toBe(0); // der Server allein findet es nicht
+    expect(raw.total).toBe(0); // the server alone does not find it
     const r = await service.search({ text: 'Oktober', mailbox: 'archive' });
     expect(r.total).toBe(1);
     expect(r.messages[0]!.subject).toBe('Rechnungsübersicht Oktober');
   });
-  it('findet es in allen Ordnern und bei der Betreffsuche', async () => {
+  it('finds it across all folders and with subject search', async () => {
     expect((await service.search({ text: 'Oktober' })).messages.map((m) => m.mailbox)).toEqual(['Archive']);
     expect((await service.search({ subject: 'Oktober' })).total).toBe(1);
   });
-  it('ein Treffer nur im Nachrichtentext wird weiterhin vom Server gefunden', async () => {
-    const r = await service.search({ text: 'Inhalt von Ungelesen eins' });
+  it('a match only in the message body is still found by the server', async () => {
+    const r = await service.search({ text: 'Content of Unread one' });
     expect(r.total).toBeGreaterThanOrEqual(1);
   });
 });
 
-describe('Konversationen und Seiten über den Dienst', () => {
-  it('get_thread findet Nachrichten in mehreren Ordnern über Message-ID, In-Reply-To und References', async () => {
-    const first = (await service.listRecent('INBOX', 10)).messages.find((m) => m.subject === 'Ungelesen eins')!;
+describe('Conversations and pages via the service', () => {
+  it('get_thread finds messages in several folders via Message-ID, In-Reply-To and References', async () => {
+    const first = (await service.listRecent('INBOX', 10)).messages.find((m) => m.subject === 'Unread one')!;
     const before = JSON.stringify(server.flagsSnapshot());
     const t = await service.getThread(first.id);
-    expect(t.messages.map((m) => m.subject).sort()).toEqual(['Gelesen drei', 'Re: Ungelesen eins', 'Ungelesen eins']);
+    expect(t.messages.map((m) => m.subject).sort()).toEqual(['Re: Unread one', 'Read three', 'Unread one']);
     expect(t.messages.map((m) => m.mailbox).sort()).toEqual(['INBOX', 'INBOX', 'Sent Messages']);
     expect(t.messages.every((m) => typeof m.excerpt === 'string' && m.excerpt.length > 0)).toBe(true);
     expect(JSON.stringify(server.flagsSnapshot())).toBe(before);
   });
 
-  it('get_thread ohne Text liefert nur die Übersicht', async () => {
+  it('get_thread without text returns only the overview', async () => {
     const first = (await service.listRecent('INBOX', 10)).messages[0]!;
     const t = await service.getThread(first.id, { includeText: false });
     expect(t.messages.every((m) => !('excerpt' in m))).toBe(true);
   });
 
-  it('get_message liefert eine kurze Nachricht in einer Seite ohne next_offset', async () => {
+  it('get_message returns a short message in one page without next_offset', async () => {
     const first = (await service.listRecent('INBOX', 10)).messages[0]!;
     const m = await service.getMessage(first.id);
     expect(m.page.truncated).toBe(false);
@@ -156,19 +156,19 @@ describe('Konversationen und Seiten über den Dienst', () => {
   });
 });
 
-describe('Nachrichten-IDs', () => {
-  it('enthalten Ordner, UIDVALIDITY und UID und lassen sich wieder lesen', async () => {
+describe('Message IDs', () => {
+  it('contain folder, UIDVALIDITY and UID and can be decoded again', async () => {
     const r = await service.listRecent('INBOX', 1);
     const ref = decodeRef(r.messages[0]!.id);
     expect(ref).toMatchObject({ path: 'INBOX', uidValidity: '1700' });
     expect(ref.uid).toBeGreaterThan(0);
   });
-  it('lehnen veraltete UIDVALIDITY ab', async () => {
+  it('reject a stale UIDVALIDITY', async () => {
     const r = await service.listRecent('INBOX', 1);
     const stale = r.messages[0]!.id.replace('|1700|', '|999|');
-    await expect(service.getMessage(stale)).rejects.toThrow(/veraltet/);
+    await expect(service.getMessage(stale)).rejects.toThrow(/stale/);
   });
-  it.each(['', 'x', 'INBOX|1|', 'INBOX|a|1', '../../etc|1|1|2'])('lehnen ungültige ID "%s" ab', async (id) => {
-    await expect(service.getMessage(id)).rejects.toThrow(/Nachrichten-ID/);
+  it.each(['', 'x', 'INBOX|1|', 'INBOX|a|1', '../../etc|1|1|2'])('reject invalid ID "%s"', async (id) => {
+    await expect(service.getMessage(id)).rejects.toThrow(/Invalid message ID/);
   });
 });
