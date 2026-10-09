@@ -1,0 +1,51 @@
+name: Release
+
+# Pushing a tag v<version> runs the tests, builds the .mcpb and publishes it as a
+# GitHub release. Release notes come from docs/releases/v<version>.md if that file
+# exists, otherwise GitHub generates them. If the release already exists (created
+# by hand), the freshly built .mcpb is attached to it instead.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check that the tag matches package.json
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag says $TAG_VERSION, package.json says $PKG_VERSION"
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build:mcpb
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FILE="dist/icloud-mcp-${GITHUB_REF_NAME#v}.mcpb"
+          NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$FILE" --clobber
+          elif [ -f "$NOTES" ]; then
+            gh release create "$GITHUB_REF_NAME" "$FILE" --title "iClaude ${GITHUB_REF_NAME#v}" --notes-file "$NOTES" --latest
+          else
+            gh release create "$GITHUB_REF_NAME" "$FILE" --title "iClaude ${GITHUB_REF_NAME#v}" --generate-notes --latest
+          fi

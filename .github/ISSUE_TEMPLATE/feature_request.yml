@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest a new capability or an improvement.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        iClaude deliberately never sends mail, never deletes mail permanently and never sends invitations. Requests that would change these rules are unlikely to be accepted, but explaining the use case still helps.
+  - type: textarea
+    id: usecase
+    attributes:
+      label: What do you want to do with Claude?
+      description: Describe the situation, not only the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
