@@ -1,6 +1,6 @@
 [English](README.md)
 
-<p align="center"><img src="assets/icon.png" width="140" alt="iClaude-Logo: Wolke in Claude-Orange"></p>
+<p align="center"><img src="assets/icon.png" width="140" alt="iClaude-Logo: eigenständige Terrakottawolke aus organischen Fächerformen"></p>
 
 # iClaude: iCloud-Konnektor für Claude Desktop
 
@@ -250,3 +250,5 @@ Die Entwicklerdokumentation ist auf Englisch. Aufbau, Sicherheitsregeln und beka
 MIT-Lizenz, siehe [`LICENSE`](LICENSE). Nutzung auf eigene Verantwortung.
 
 iClaude ist ein unabhängiges Projekt. Es steht in keiner Verbindung zu Apple oder Anthropic und wird von keinem der beiden unterstützt. iCloud ist eine Marke von Apple Inc., Claude eine Marke von Anthropic PBC.
+
+Projektgrafiken: [PNG-Logo](assets/logo.png), [transparentes PNG-Icon](assets/icon.png) und [englische GitHub Social Preview](assets/social-preview.png). Das aktuelle Zeichen wurde eigens für iClaude generiert; es verwendet weder das iCloud-Logo von Apple noch das Claude-Logo von Anthropic. Herkunft des früheren Icons und Exportdetails: [Grafikhinweise](assets/README.md).

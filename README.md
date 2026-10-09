@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/icon.png" width="140" alt="iClaude logo: a cloud in Claude orange"></p>
+<p align="center"><img src="assets/icon.png" width="140" alt="iClaude logo: an original terracotta cloud with organic radiating forms"></p>
 
 # iClaude: iCloud connector for Claude Desktop
 
@@ -250,3 +250,5 @@ Architecture, safety rules and known pitfalls: [`docs/DEVELOPMENT.md`](docs/DEVE
 MIT License, see [`LICENSE`](LICENSE). Use at your own risk.
 
 iClaude is an independent project. It is not affiliated with, endorsed by or sponsored by Apple or Anthropic. iCloud is a trademark of Apple Inc., Claude is a trademark of Anthropic PBC.
+
+Project graphics: [PNG logo](assets/logo.png), [transparent PNG icon](assets/icon.png) and [English GitHub social preview](assets/social-preview.png). The current mark was generated specifically for iClaude; it does not reuse the Apple iCloud or Anthropic Claude logo. See [asset provenance](assets/README.md) for the earlier icon’s attribution and export details.

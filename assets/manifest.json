@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "created": "2026-10-09",
+  "assets": [
+    {
+      "file": "logo.png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "mode": "RGBA",
+      "bytes": 391516,
+      "sha256": "cd8e9e39631c62ccf62c068dcd07d6afb30809764b73ad3df29d99bde8efc923"
+    },
+    {
+      "file": "icon.png",
+      "dimensions": [
+        512,
+        512
+      ],
+      "mode": "RGBA",
+      "bytes": 112614,
+      "sha256": "e21f84a8a2e0323d6c433cc561cba201802f5bfa93b34c502ee2deee4b0cc2fb"
+    },
+    {
+      "file": "social-preview.png",
+      "dimensions": [
+        1280,
+        640
+      ],
+      "mode": "RGB",
+      "bytes": 155740,
+      "sha256": "158f72227344ef73215b7099af6eca9105ed697a0e1bf606466ecdc7f183dfb7"
+    },
+    {
+      "file": "source/icon-source.png",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "bytes": 653946,
+      "sha256": "cabdd3354910679ff0151e7f14fb2e08f728bf2f239731d301469f3640487500"
+    }
+  ],
+  "generation": "Original symbol generated with the built-in Codex imagegen tool; transparent PNG export. Social preview composed deterministically from that symbol.",
+  "prompt_file": "README.md",
+  "typography": {
+    "project_name": "Georgia Bold",
+    "supporting_copy": "Arial"
+  },
+  "social_preview_copy": [
+    "iClaude",
+    "iCloud for Claude Desktop",
+    "Calendar · Contacts · Mail",
+    "Reminders · Notes",
+    "Local MCP extension for macOS",
+    "Independent project · github.com/zoblon/iClaude"
+  ],
+  "selection_status": "Selected by Tobi on 2026-10-09"
+}
