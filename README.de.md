@@ -191,6 +191,8 @@ Für dieses Projekt heißt das: Lesen, Termine anlegen und Entwürfe funktionier
 2. Unter *Einstellungen → Erweiterungen* prüfen, ob die Felder noch gefüllt sind. **Anthropic dokumentiert nicht, ob die Einstellungen beim Überinstallieren erhalten bleiben.** Claude Desktop speichert sie zwar getrennt von den Programmdateien, halte zur Sicherheit aber das App-Passwort bereit oder erstelle ein neues.
 3. Die Freigaben prüfen: `delete_event`, `trash_message`, `update_event`, `update_contact`, `move_message` und `set_message_flags` auf »Nachfragen«, neu hinzugekommene Werkzeuge bewusst einstellen.
 
+Version 0.4.1 enthält das neue iClaude-Icon im Installationspaket.
+
 Version 0.4.0 bringt Erinnerungen und Notizen; beim ersten Benutzen fragt macOS einmal nach der oben beschriebenen Freigabe. Seit Version 0.2.1 heißt die Erweiterung in Claude Desktop **iClaude**, vorher »iCloud: Kalender, Kontakte, Mail«. Gespeicherte Aufgaben oder Anweisungen, die den alten Namen nennen, bitte anpassen.
 
 ## Sicherungen gelöschter Termine

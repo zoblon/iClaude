@@ -191,6 +191,8 @@ For this project that means: reading, creating events and drafts work in schedul
 2. Check in *Settings > Extensions* that the fields are still filled in. **Anthropic doesn't document whether settings are kept when installing over an existing version.** Claude Desktop stores them separately from the program files, but keep the app-specific password at hand or create a new one, just in case.
 3. Check the permissions: `delete_event`, `trash_message`, `update_event`, `update_contact`, `move_message` and `set_message_flags` set to require approval, and set any newly added tools deliberately.
 
+Version 0.4.1 updates the extension icon to the new iClaude mark.
+
 Version 0.4.0 adds Reminders and Notes; the first use of each asks for the macOS permission described above. Since version 0.2.1 the extension is called **iClaude** in Claude Desktop; before that it was "iCloud: Kalender, Kontakte, Mail". Please update saved tasks or instructions that use the old name.
 
 ## Backups of deleted events
