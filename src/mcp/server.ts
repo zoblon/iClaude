@@ -38,7 +38,7 @@ const INSTRUCTIONS = [
 ].join(' ');
 
 export function createServer(cfg: Config): McpServer {
-  const server = new McpServer({ name: 'iClaude', version: '0.4.0' }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({ name: 'iClaude', version: '0.4.1' }, { instructions: INSTRUCTIONS });
   const dav = new CalDavGateway(cfg);
   registerCalendarTools(server, new CalendarService(cfg, dav));
   registerWriteTools(server, new CalendarWriteService(cfg, dav, new BackupStore({ dir: defaultBackupDir(), zone: cfg.timezone })));
