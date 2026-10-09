@@ -174,13 +174,17 @@ describe('Updating', () => {
     await expect(svc.updateEvent({ id, title: 'x', sharedCalendar: 'Shared' })).rejects.toThrow(/is not a shared calendar/);
   });
 
-  it('refuses changes to single occurrences, allows the whole series', async () => {
+  it('changes one occurrence of a series, but refuses occurrence_start for events that are no series', async () => {
     const id = store.put('priv', 'r', ev('R', 'RRULE:FREQ=WEEKLY;COUNT=5'));
-    await expect(svc.updateEvent({ id, title: 'x', occurrenceStart: '2026-10-28T10:00:00+01:00' })).rejects.toThrow(/single occurrences/);
+    const one = store.put('priv', 'one', ev('One'));
+    await expect(svc.updateEvent({ id: one, title: 'x', occurrenceStart: '2026-10-21T10:00:00+02:00' })).rejects.toThrow(/not part of a recurring series/);
     expect(store.updates).toBe(0);
-    const r = await svc.updateEvent({ id, title: 'Whole series' });
-    expect(r.event.recurring).toBe(true);
+    const r = await svc.updateEvent({ id, title: 'Only this one', occurrenceStart: '2026-10-28T10:00:00+01:00' });
+    expect(r.event.title).toBe('Only this one');
     expect(store.updates).toBe(1);
+    const whole = await svc.updateEvent({ id, title: 'Whole series' });
+    expect(whole.event.recurring).toBe(true);
+    expect(store.updates).toBe(2);
   });
 
   it('does not change the time of a series with exceptions, but does change the title', async () => {
@@ -311,6 +315,36 @@ describe('Deleting, sending and moving in the code: only the two allowed paths',
     const body = caldav.slice(caldav.indexOf('async deleteObject'));
     expect(body.indexOf("WriteGrant.isValid(grant, 'delete')")).toBeGreaterThan(-1);
     expect(body.indexOf("WriteGrant.isValid(grant, 'delete')")).toBeLessThan(body.indexOf("method: 'DELETE'"));
+  });
+
+  it('events are deleted in exactly three ways: delete_event, the source of a move after the copy was verified, nothing else', () => {
+    const perms = code.find((x) => x.f === 'src/core/permissions.ts')!.code;
+    // the delete grant is issued in exactly two functions
+    const issuers = [...perms.matchAll(/WriteGrant\.issue\('delete'/g)].length;
+    expect(issuers).toBe(2);
+    const authDelete = perms.slice(perms.indexOf('export function authorizeDelete'), perms.indexOf('export interface EventMoveRequest'));
+    const authMove = perms.slice(perms.indexOf('export function authorizeEventMove'), perms.indexOf('/* Mail: saving drafts'));
+    expect(authDelete).toContain("WriteGrant.issue('delete'");
+    expect(authMove).toContain("WriteGrant.issue('delete'");
+    // never out of a shared calendar, never with attendees or another organizer, never a single occurrence
+    for (const part of [authDelete, authMove]) expect(part).toMatch(/c\.shared/);
+    expect(authMove).toMatch(/hasAttendees/);
+    expect(authMove).toMatch(/occurrenceStart/);
+    const ws = code.find((x) => x.f === 'src/core/calendar/writeService.ts')!.code;
+    expect([...ws.matchAll(/this\.store\.deleteObject\(/g)]).toHaveLength(2);
+    const del = ws.slice(ws.indexOf('async deleteEvent'), ws.indexOf('private startMatches'));
+    expect(del.indexOf('authorizeDelete(')).toBeLessThan(del.indexOf('this.store.deleteObject('));
+    expect(del.indexOf('this.backup.save(')).toBeLessThan(del.indexOf('this.store.deleteObject('));
+    const mv = ws.slice(ws.indexOf('private async moveEvent'), ws.indexOf('private copyProblem'));
+    const order = ['authorizeEventMove(', 'this.backup.save(', 'this.store.createObject(', 'this.copyProblem(', 'this.store.deleteObject('].map((k) => mv.indexOf(k));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order); // grant, backup, create, read back and compare, only then delete
+    expect(mv).toContain('grants.delete');
+    // no other file deletes events or calls the store's delete
+    for (const { f, code: c } of code) {
+      if (f === 'src/core/calendar/writeService.ts' || f === 'src/core/calendar/caldav.ts' || f === 'src/core/calendar/types.ts') continue;
+      expect(/deleteObject/.test(c), `${f}: deleteObject`).toBe(false);
+    }
   });
 
   it('mails are moved only in moveToTrash: direct UID MOVE, never imapflow.messageMove (its fallback would be COPY + deleted flag + EXPUNGE)', () => {

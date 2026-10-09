@@ -4,8 +4,10 @@
  * Writing gateway methods require a grant (WriteGrant, DraftGrant, TrashGrant). Grants only exist as the
  * result of the authorize* functions below, so anything that wants to write has to pass through here.
  *
- * Deletion is allowed in only two narrowly limited ways:
+ * Deleting is allowed in only three narrowly limited ways:
  *  - an event of the user's own (authorizeDelete; it is backed up as .ics first),
+ *  - the SOURCE of an event that has been moved to another calendar (authorizeEventMove; backed up as .ics first, and only after the
+ *    copy in the target calendar has been created and read back),
  *  - MOVING a message to the Trash (authorizeTrash). Messages are never deleted permanently.
  * Mail can also be moved to other folders (authorizeMove; never to the Trash, Drafts, Sent or Junk) and marked
  * read/unread and flagged/unflagged (authorizeFlags; only \\Seen and \\Flagged). Nothing is ever sent.
@@ -106,7 +108,7 @@ export interface UpdateRequest {
   /** The user's addresses (Apple ID, iCloud address). */
   selfAddresses: string[];
   sharedCalendar?: string | undefined;
-  /** If set, the caller wants to change a single occurrence. */
+  /** If set, the caller wants to change a single occurrence of a series (an override with RECURRENCE-ID is written). */
   occurrenceStart?: string | undefined;
   /** Does the request change start, end or all-day status? */
   touchesTime: boolean;
@@ -130,8 +132,8 @@ export function authorizeUpdate(r: UpdateRequest): WriteGrant {
   if (!f.hasMaster) {
     throw new UserError('This entry is only a single occurrence of a recurring series whose series is not stored here. Change refused; please change it directly in Apple Calendar.');
   }
-  if (r.occurrenceStart) {
-    throw new UserError('Changing single occurrences of a recurring series is not supported. Only the whole series can be changed (omit occurrence_start).');
+  if (r.occurrenceStart && !f.recurring) {
+    throw new UserError('This event is not part of a recurring series, so there is no single occurrence to change. Omit occurrence_start to change the event.');
   }
   if (f.hasAttendees) {
     throw new UserError('The event has attendees. Events with attendees are not changed because that can trigger invitations. Please make the change directly in Apple Calendar.');
@@ -139,7 +141,7 @@ export function authorizeUpdate(r: UpdateRequest): WriteGrant {
   if (f.organizer && !r.selfAddresses.some((a) => same(a, f.organizer!))) {
     throw new UserError('The event was organized by another person and is not changed. Please make the change directly in Apple Calendar.');
   }
-  if (f.recurring && f.hasExceptions && r.touchesTime) {
+  if (!r.occurrenceStart && f.recurring && f.hasExceptions && r.touchesTime) {
     throw new UserError(
       'This series contains exceptions (deleted or moved occurrences). The time of the whole series is not changed so the exceptions do not shift. Title, location, notes and alerts can be changed.',
     );
@@ -190,6 +192,66 @@ export function authorizeDelete(r: DeleteRequest): WriteGrant {
     throw new UserError('The event was organized by another person and is not deleted. Please delete it directly in Apple Calendar.');
   }
   return WriteGrant.issue('delete', c);
+}
+
+export interface EventMoveRequest {
+  calendars: CalendarInfo[];
+  /** Calendar the event is in. */
+  source: CalendarInfo;
+  facts: EventFacts;
+  /** The user's addresses (Apple ID, iCloud address). */
+  selfAddresses: string[];
+  /** Name of the target calendar. */
+  target: string;
+  /** Exact name of a shared target calendar (the only way to move into a shared calendar). */
+  sharedCalendar?: string | undefined;
+  /** If set, the caller wants to move a single occurrence. */
+  occurrenceStart?: string | undefined;
+}
+
+/** The two grants of a move: create in the target calendar, delete the source after the copy was verified. */
+export interface EventMoveGrants {
+  create: WriteGrant;
+  delete: WriteGrant;
+  target: CalendarInfo;
+}
+
+/**
+ * Moving an event to another calendar (create in the target, read back, then delete the source). Stricter than changing:
+ *  - never out of a shared calendar (the deletion would be visible to other people immediately),
+ *  - never with attendees or another organizer, never a single occurrence of a series,
+ *  - into a shared calendar only when its exact name is given as shared_calendar.
+ * This is the third (and last) way an event is deleted, see the guard test.
+ */
+export function authorizeEventMove(r: EventMoveRequest): EventMoveGrants {
+  const { source: c, facts: f } = r;
+  assertUsable(c);
+  if (c.shared) {
+    throw new UserError(`The event is in the shared calendar "${c.name}". Events are never moved out of shared calendars because the removal would be visible to other people immediately. Please move it directly in Apple Calendar.`);
+  }
+  if (r.occurrenceStart) throw new UserError('Single occurrences of a series cannot be moved to another calendar. Only the whole series can be moved (omit occurrence_start).');
+  if (!f.hasMaster) throw new UserError('This entry is only a single occurrence of a recurring series whose series is not stored here. Move refused; please move it directly in Apple Calendar.');
+  if (f.hasAttendees) throw new UserError('The event has attendees. Events with attendees are not moved because that can trigger invitations or cancellations. Please move it directly in Apple Calendar.');
+  if (f.organizer && !r.selfAddresses.some((a) => same(a, f.organizer!))) {
+    throw new UserError('The event was organized by another person and is not moved. Please move it directly in Apple Calendar.');
+  }
+
+  const events = r.calendars.filter((x) => x.kind === 'events');
+  const names = (list: CalendarInfo[]) => list.map((x) => `"${x.name}"`).join(', ') || '(none)';
+  const hits = r.calendars.filter((x) => same(x.name, r.target));
+  if (hits.length === 0) throw new UserError(`Calendar "${r.target}" not found. Private calendars: ${names(events.filter((x) => !x.shared))}.`);
+  if (hits.length > 1) throw new UserError(`The name "${r.target}" is ambiguous. Nothing was moved.`);
+  const target = hits[0]!;
+  assertUsable(target);
+  if (target.id === c.id) throw new UserError('The event is already in this calendar. Nothing was moved.');
+  if (target.shared) {
+    if (!r.sharedCalendar || !same(r.sharedCalendar, target.name)) {
+      throw new UserError(`"${target.name}" is a shared calendar. Events there appear immediately for other people. If that is intended, name the calendar explicitly with shared_calendar="${target.name}".`);
+    }
+  } else if (r.sharedCalendar) {
+    throw new UserError(`"${target.name}" is not a shared calendar. Use shared_calendar only for shared calendars.`);
+  }
+  return { create: WriteGrant.issue('create', target), delete: WriteGrant.issue('delete', c), target };
 }
 
 /* ------------------------------------------------------------------ */

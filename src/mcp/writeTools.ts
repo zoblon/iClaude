@@ -49,7 +49,17 @@ export const updateEventSchema = z.strictObject({
   notes: text(5000).optional().describe('An empty string removes the notes.'),
   alerts_minutes_before: alerts.optional().describe('Replaces all reminders. An empty list removes them.'),
   shared_calendar: sharedCalendar.optional(),
-  occurrence_start: z.string().max(40).optional().describe('Not supported: single occurrences of a series are never changed, only the whole series.'),
+  occurrence_start: z
+    .string()
+    .max(40)
+    .optional()
+    .describe('Changes only ONE occurrence of a recurring series: its start exactly as list_events shows it in occurrenceStart (all-day: the date). Title, start/end, location, notes and alerts can be changed; the series and the other occurrences stay as they are. Without it, the whole series is changed.'),
+  move_to_calendar: z
+    .string()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe('Moves the whole event to another calendar: the name of one of your PRIVATE calendars (for a shared calendar also give its exact name in shared_calendar). A step of its own: no other field in the same call. Not for events with attendees or from other organizers, not out of shared calendars.'),
 });
 
 // strictObject: unknown fields are rejected. shared_calendar and occurrence_start exist only to refuse clearly.
@@ -103,7 +113,8 @@ export function registerWriteTools(server: McpServer, write: CalendarWriteServic
       title: 'Update event',
       description:
         'Changes an existing event (partial update; unspecified fields and unknown properties stay untouched). Use the id (and ideally etag) from list_events/search_events. ' +
-        'Refused for: events with attendees, events organized by someone else, single occurrences of a series (only the whole series can change), and events in a shared calendar unless `shared_calendar` names it. Does not delete anything (see delete_event).',
+        'With occurrence_start only that one occurrence of a recurring series is changed (written as an exception inside the series). With move_to_calendar the event is moved to another calendar (a copy is created and read back first, the original is removed only afterwards; a .ics backup is saved before). ' +
+        'Refused for: events with attendees, events organized by someone else, events in a shared calendar unless `shared_calendar` names it (a move out of a shared calendar is always refused), and occurrences that the series does not have. Deleting is a separate tool (delete_event).',
       inputSchema: updateEventSchema,
       // Overwrites existing data, hence destructive in terms of the MCP hints.
       outputSchema: dataOutputSchema,
@@ -123,12 +134,29 @@ export function registerWriteTools(server: McpServer, write: CalendarWriteServic
           alertsMinutes: a.alerts_minutes_before,
           sharedCalendar: a.shared_calendar,
           occurrenceStart: a.occurrence_start,
+          moveToCalendar: a.move_to_calendar,
         });
+        if (r.moved) {
+          return dataResult({
+            summary: `Event moved from "${r.moved.from}" to "${r.moved.to}".`,
+            source: 'the moved event',
+            data: { event: r.event, moved: { from: r.moved.from, to: r.moved.to, oldId: r.moved.oldId, uidChanged: r.moved.uidChanged, backup: { file: r.moved.backup.file, path: r.moved.backup.path } } },
+            notes: [
+              `The event has a new id in "${r.moved.to}" (data.event.id); the old id is no longer valid.`,
+              `A backup .ics of the original is stored in ${r.moved.backup.folder} (file name and path under data.moved.backup).`,
+              ...(r.moved.uidChanged ? ['The target calendar did not accept the old UID, so the event got a new one.'] : []),
+              ...(r.shared ? [`"${r.calendar}" is a SHARED calendar: the event is immediately visible to other people.`] : []),
+            ],
+          });
+        }
         return dataResult({
           summary: `Event updated in calendar "${r.calendar}" (${(r.changed ?? []).join(', ')}).`,
           source: 'the updated event',
           data: r.event,
-          notes: r.shared ? [`"${r.calendar}" is a SHARED calendar: the change is immediately visible to other people.`] : [],
+          notes: [
+            ...(a.occurrence_start ? ['Only this occurrence was changed; the rest of the series is unchanged. The occurrence keeps its occurrenceStart (the original start) for later changes.'] : []),
+            ...(r.shared ? [`"${r.calendar}" is a SHARED calendar: the change is immediately visible to other people.`] : []),
+          ],
         });
       }),
   );

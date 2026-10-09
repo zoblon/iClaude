@@ -1,6 +1,10 @@
 /** Error whose message may be shown to the user (and Claude) unchanged. */
 export class UserError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** HTTP status of the server's refusal, if the error comes from one. */
+    readonly status?: number,
+  ) {
     super(message);
     this.name = 'UserError';
   }

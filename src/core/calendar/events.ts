@@ -21,7 +21,7 @@ export interface ExpandResult {
   truncated: boolean;
 }
 
-function registerTimezones(root: ICAL.Component): void {
+export function registerTimezones(root: ICAL.Component): void {
   for (const vtz of root.getAllSubcomponents('vtimezone')) {
     try {
       ICAL.TimezoneService.register(vtz);

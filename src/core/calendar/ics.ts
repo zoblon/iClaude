@@ -3,7 +3,7 @@ import ICAL from 'ical.js';
 import { DateTime } from 'luxon';
 import { UserError } from '../errors.js';
 import type { EventFacts } from '../permissions.js';
-import { toMs } from './events.js';
+import { registerTimezones, toMs } from './events.js';
 import { isoIn } from '../time.js';
 
 export type Weekday = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU';
@@ -371,6 +371,33 @@ function names(c: ICAL.Component): string[] {
   return [...c.getAllProperties().map((p) => p.name), ...c.getAllSubcomponents().map((s) => `#${s.name}`)];
 }
 
+/** Title, location, notes, times and reminders on one VEVENT (the master, or an override of a single occurrence). */
+function applyFields(root: ICAL.Component, target: ICAL.Component, patch: EventPatch, removable: Set<string>, zone: string = patch.zone): void {
+  if (patch.title !== undefined) target.updatePropertyWithValue('summary', patch.title);
+  if (patch.location !== undefined) {
+    removable.add('location');
+    setText(target, 'location', patch.location);
+  }
+  if (patch.notes !== undefined) {
+    removable.add('description');
+    setText(target, 'description', patch.notes);
+  }
+  if (patch.time) {
+    const { allDay } = patch.time;
+    const start = allDay ? patch.time.start : patch.time.start.setZone(zone);
+    const end = allDay ? patch.time.end : patch.time.end.setZone(zone);
+    if (!allDay) ensureTimezone(root, zone);
+    for (const n of ['dtstart', 'dtend', 'duration']) target.removeAllProperties(n);
+    target.addProperty(dateProp('dtstart', start, allDay, zone));
+    target.addProperty(dateProp('dtend', allDay ? end.plus({ days: 1 }) : end, allDay, zone));
+    removable.add('dtend').add('duration').add('dtstart');
+  }
+  if (patch.alertsMinutes) {
+    setAlarms(target, patch.alertsMinutes, String(target.getFirstPropertyValue('summary') ?? ''));
+    removable.add('#valarm');
+  }
+}
+
 /**
  * Applies a partial change to the existing .ics. The document is edited in place,
  * so all untouched (including unknown) properties are preserved.
@@ -382,27 +409,7 @@ export function applyPatch(ics: string, patch: EventPatch): string {
   const before = names(master);
   const removable = new Set<string>();
 
-  if (patch.title !== undefined) master.updatePropertyWithValue('summary', patch.title);
-  if (patch.location !== undefined) {
-    removable.add('location');
-    setText(master, 'location', patch.location);
-  }
-  if (patch.notes !== undefined) {
-    removable.add('description');
-    setText(master, 'description', patch.notes);
-  }
-  if (patch.time) {
-    const { start, end, allDay } = patch.time;
-    if (!allDay) ensureTimezone(root, patch.zone);
-    for (const n of ['dtstart', 'dtend', 'duration']) master.removeAllProperties(n);
-    master.addProperty(dateProp('dtstart', start, allDay, patch.zone));
-    master.addProperty(dateProp('dtend', allDay ? end.plus({ days: 1 }) : end, allDay, patch.zone));
-    removable.add('dtend').add('duration').add('dtstart');
-  }
-  if (patch.alertsMinutes) {
-    setAlarms(master, patch.alertsMinutes, String(master.getFirstPropertyValue('summary') ?? ''));
-    removable.add('#valarm');
-  }
+  applyFields(root, master, patch, removable);
 
   const now = ICAL.Time.fromJSDate(new Date(), true);
   master.updatePropertyWithValue('dtstamp', now);
@@ -438,4 +445,168 @@ export function assertSafeOutput(ics: string, rule: { attendees: number; organiz
   if (rule.organizerFrom ? orgBefore !== orgAfter : orgAfter) {
     throw new UserError('Internal safeguard: the organizer would be changed. Aborted, nothing was written. Please make the change directly in Apple Calendar.');
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Single occurrences of a series                                      */
+/* ------------------------------------------------------------------ */
+
+/** Deep copy: ical.js hands out its internal arrays, which must not be shared between components. */
+const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
+const MAX_OCCURRENCE_ITERATIONS = 20_000;
+const OVERRIDE_SKIP = new Set(['rrule', 'rdate', 'exrule', 'exdate', 'recurrence-id', 'dtstart', 'dtend', 'duration', 'dtstamp', 'sequence', 'last-modified']);
+
+/** The occurrence a change refers to. */
+export interface LocatedOccurrence {
+  /** Current start and end (of the override, if there is one). */
+  startMs: number;
+  endMs: number;
+  allDay: boolean;
+  /** The original start of the occurrence according to the rule (RECURRENCE-ID), as shown by list_events in `occurrenceStart`. */
+  key: string;
+  /** Original start (RECURRENCE-ID value). */
+  original: ICAL.Time;
+  /** TZID of the master's DTSTART, if any. */
+  tzid: string | undefined;
+  /** An override for this occurrence already exists. */
+  hasOverride: boolean;
+}
+
+function minuteOf(ms: number) {
+  return Math.floor(ms / 60_000);
+}
+
+/**
+ * Finds the occurrence that starts at `occurrenceStart` (as list_events shows it: the original start of the occurrence;
+ * the current start of a moved occurrence is accepted too). Refuses occurrences the rule does not produce, also deleted ones (EXDATE).
+ */
+export function locateOccurrence(ics: string, occurrenceStart: string, zone: string): LocatedOccurrence {
+  const root = parse(ics);
+  registerTimezones(root);
+  const master = masterOf(root);
+  if (!master || !(master.hasProperty('rrule') || master.hasProperty('rdate'))) throw new UserError('This event is not part of a recurring series.');
+  const tzid = master.getFirstProperty('dtstart')?.getParameter('tzid') as string | undefined;
+  const ev = new ICAL.Event(master);
+  const isDay = /^\d{4}-\d{2}-\d{2}$/.test(occurrenceStart.trim());
+  const dt = DateTime.fromISO(occurrenceStart.trim(), { zone });
+  if (!dt.isValid) throw new UserError(`occurrence_start "${occurrenceStart.slice(0, 40)}" is invalid. Use the occurrenceStart exactly as list_events shows it, e.g. 2026-10-28T10:00:00+01:00 (all-day: 2026-10-28).`);
+  const wantMs = dt.toMillis();
+  const sameInstant = (ms: number, allDay: boolean) =>
+    allDay ? DateTime.fromMillis(ms, { zone }).toISODate() === dt.toISODate() : !isDay && minuteOf(ms) === minuteOf(wantMs);
+  // the same form list_events shows in occurrenceStart
+  const keyOf = (ms: number) => isoIn(ms, zone);
+
+  // 1. an existing override: matched by its RECURRENCE-ID or by its current start
+  for (const o of root.getAllSubcomponents('vevent')) {
+    const rid = o.getFirstPropertyValue('recurrence-id') as ICAL.Time | null;
+    if (!rid) continue;
+    const ridTz = (o.getFirstProperty('recurrence-id')?.getParameter('tzid') as string | undefined) ?? tzid;
+    const ridMs = toMs(rid, ridTz, zone);
+    const oev = new ICAL.Event(o);
+    const oTz = (o.getFirstProperty('dtstart')?.getParameter('tzid') as string | undefined) ?? ridTz;
+    const sMs = toMs(oev.startDate, oTz, zone);
+    if (sameInstant(ridMs, rid.isDate) || sameInstant(sMs, oev.startDate.isDate)) {
+      let eMs = toMs(oev.endDate, oTz, zone);
+      if (eMs <= sMs) eMs = oev.startDate.isDate ? DateTime.fromMillis(sMs, { zone }).plus({ days: 1 }).toMillis() : sMs + 3_600_000;
+      return { startMs: sMs, endMs: eMs, allDay: oev.startDate.isDate, key: keyOf(ridMs), original: rid.clone(), tzid: ridTz, hasOverride: true };
+    }
+  }
+
+  // 2. an occurrence the rule produces
+  const it = ev.iterator();
+  let n = 0;
+  for (let next = it.next(); next; next = it.next()) {
+    if (++n > MAX_OCCURRENCE_ITERATIONS) break;
+    const ms = toMs(next, tzid, zone);
+    if (ms > wantMs + 2 * 86_400_000) break;
+    if (!sameInstant(ms, next.isDate)) continue;
+    const d = ev.getOccurrenceDetails(next);
+    const sMs = toMs(d.startDate, tzid, zone);
+    let eMs = toMs(d.endDate, tzid, zone);
+    if (eMs <= sMs) eMs = d.startDate.isDate ? DateTime.fromMillis(sMs, { zone }).plus({ days: 1 }).toMillis() : sMs + 3_600_000;
+    return { startMs: sMs, endMs: eMs, allDay: d.startDate.isDate, key: keyOf(ms), original: next.clone(), tzid, hasOverride: false };
+  }
+  throw new UserError(
+    'The series has no occurrence starting at that time (it may have been deleted, or the time is not part of the rule). Use occurrence_start exactly as list_events shows it in occurrenceStart.',
+  );
+}
+
+/**
+ * Changes one occurrence of a series: writes (or updates) an override VEVENT with RECURRENCE-ID in the same resource.
+ * The master and the other overrides stay exactly as they are; the override gets SEQUENCE and LAST-MODIFIED like any change.
+ */
+export function applyOccurrencePatch(ics: string, loc: LocatedOccurrence, patch: EventPatch): string {
+  const root = parse(ics);
+  registerTimezones(root);
+  const master = masterOf(root);
+  if (!master) throw new UserError('No master event found. Please check the event in Apple Calendar.');
+  const others = root.getAllSubcomponents('vevent').filter((c) => c !== master);
+  const masterBefore = JSON.stringify(master.toJSON());
+
+  // Time zone for new times: that of the series; UTC series stay UTC; floating series use the configured zone.
+  const masterStart = master.getFirstPropertyValue('dtstart') as ICAL.Time | null;
+  const zone = loc.tzid && DateTime.local().setZone(loc.tzid).isValid ? loc.tzid : masterStart?.zone === ICAL.Timezone.utcTimezone ? 'UTC' : patch.zone;
+
+  let target: ICAL.Component | undefined;
+  let untouchedOverrides: string[];
+  if (loc.hasOverride) {
+    target = others.find((o) => {
+      const rid = o.getFirstPropertyValue('recurrence-id') as ICAL.Time | null;
+      return rid ? rid.compare(loc.original) === 0 : false;
+    });
+    if (!target) throw new UserError('The override of this occurrence could not be found. Nothing was changed.');
+    untouchedOverrides = others.filter((o) => o !== target).map((o) => JSON.stringify(o.toJSON()));
+  } else {
+    untouchedOverrides = others.map((o) => JSON.stringify(o.toJSON()));
+    const ov = new ICAL.Component('vevent');
+    for (const p of master.getAllProperties()) if (!OVERRIDE_SKIP.has(p.name)) ov.addProperty(new ICAL.Property(clone(p.toJSON())));
+    for (const a of master.getAllSubcomponents('valarm')) ov.addSubcomponent(new ICAL.Component(clone(a.toJSON())));
+    const rid = new ICAL.Property('recurrence-id');
+    rid.setValue(loc.original.clone());
+    if (loc.tzid && !loc.original.isDate) rid.setParameter('tzid', loc.tzid);
+    ov.addProperty(rid);
+    // The override starts out with the original times of the occurrence.
+    const mk = (name: string, t: ICAL.Time) => {
+      const prop = new ICAL.Property(name);
+      prop.setValue(t.clone());
+      if (loc.tzid && !t.isDate) prop.setParameter('tzid', loc.tzid);
+      return prop;
+    };
+    const d = new ICAL.Event(master).getOccurrenceDetails(loc.original);
+    ov.addProperty(mk('dtstart', d.startDate));
+    ov.addProperty(mk('dtend', d.endDate));
+    ov.addPropertyWithValue('sequence', Number(master.getFirstPropertyValue('sequence') ?? 0));
+    root.addSubcomponent(ov);
+    target = ov;
+  }
+
+  const removable = new Set<string>();
+  const before = names(target);
+  applyFields(root, target, patch, removable, zone);
+  const now = ICAL.Time.fromJSDate(new Date(), true);
+  target.updatePropertyWithValue('dtstamp', now);
+  target.updatePropertyWithValue('last-modified', now);
+  const seq = Number(target.getFirstPropertyValue('sequence') ?? 0);
+  target.updatePropertyWithValue('sequence', Number.isFinite(seq) ? seq + 1 : 1);
+
+  const lost = before.filter((n) => !removable.has(n) && !names(target!).includes(n));
+  if (lost.length) throw new UserError(`Internal safeguard: the change would have removed properties (${[...new Set(lost)].join(', ')}). Aborted.`);
+  // The master and the other overrides must be exactly as before.
+  const masterAfter = JSON.stringify(master.toJSON());
+  const othersAfter = root.getAllSubcomponents('vevent').filter((c) => c !== master && c !== target).map((o) => JSON.stringify(o.toJSON()));
+  if (masterAfter !== masterBefore || JSON.stringify(othersAfter) !== JSON.stringify(untouchedOverrides)) {
+    throw new UserError('Internal safeguard: the series or another occurrence would have been changed. Aborted, nothing was written.');
+  }
+
+  const out = root.toString();
+  assertSafeOutput(out, { attendees: analyzeEvent(ics).hasAttendees ? -1 : 0, organizerFrom: ics });
+  return out;
+}
+
+/** The same event data with a new UID (the master and all overrides of a series share it). */
+export function withNewUid(ics: string, uid: string): string {
+  const root = parse(ics);
+  for (const v of root.getAllSubcomponents('vevent')) v.updatePropertyWithValue('uid', uid);
+  return root.toString();
 }

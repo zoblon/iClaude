@@ -10,7 +10,7 @@ A local MCP server (packaged as a Desktop Extension) for iCloud Calendar, Contac
 
 - **Never sends.** Mails are only created as drafts (also forwards, with attachments) in the Drafts folder. You review and send them yourself in Apple Mail.
 - **Never deletes mails permanently.** `trash_message` moves them to the Trash, where they can be recovered for about 30 days.
-- **Deletes only your own events, and only with a backup.** `delete_event` first saves an `.ics` backup and returns the full event.
+- **Deletes only your own events, and only with a backup.** `delete_event` first saves an `.ics` backup and returns the full event. Moving an event to another calendar removes the original only after the copy was created and read back, and also saves an `.ics` backup first.
 - **Writes to shared calendars only when you name them explicitly.** Contacts are only created or changed on request (`update_contact` backs the card up first) and are never deleted. Invitations and attendees are not supported.
 
 <details>
@@ -67,7 +67,7 @@ Notes:
    | Default calendar for new events | Name of a **private event calendar**, for example `Home`. Not a reminders list and not a shared calendar. You can leave it empty; then every new event has to name a calendar. |
 
 4. Enable the extension.
-5. **Set the delete tools, `update_contact`, `move_message` and `set_message_flags` to require approval:** in *Settings > Extensions* (depending on the version *Customize > Connectors*), under **iClaude**, for the tools `delete_event`, `trash_message`, `update_contact`, `move_message` and `set_message_flags`. Claude then asks before every deletion, contact change, move or marking and shows the title and start time, the subject and sender, or the contact's name.
+5. **Set the delete tools, `update_event`, `update_contact`, `move_message` and `set_message_flags` to require approval:** in *Settings > Extensions* (depending on the version *Customize > Connectors*), under **iClaude**, for the tools `delete_event`, `trash_message`, `update_event`, `update_contact`, `move_message` and `set_message_flags`. Claude then asks before every deletion, change, move or marking. (`update_event` also covers moving an event to another calendar, which removes the original from the old one.)
 6. Try it, for example with "Which calendars can you see?" and "What's on this week?". Shared calendars are marked as shared in the answer.
 
 The extension's interface (tool titles, descriptions, error messages) is in English. Claude still answers in your language.
@@ -77,7 +77,8 @@ The extension's interface (tool titles, descriptions, error messages) is in Engl
 | Tool | Purpose | Access |
 |---|---|---|
 | `list_calendars`, `list_events`, `search_events`, `find_free_slots` | Read calendars | read-only |
-| `create_event`, `update_event` | Create and change events | write; shared calendars only with `shared_calendar`; no attendees |
+| `create_event`, `update_event` | Create and change events, change a single occurrence of a series, move an event to another calendar | write; shared calendars only with `shared_calendar`; no attendees; a move removes the original (see below) |
+| `import_invitation` | Add an invitation from a mail as your own event | write, only in a private calendar; no attendees, no reply |
 | **`delete_event`** | Delete one of your own events | **delete** (see below) |
 | `search_contacts`, `get_contact`, `list_contact_groups`, `upcoming_contact_dates` | Read contacts, groups, upcoming birthdays and anniversaries | read-only |
 | `create_contact` | Create one contact (checks for duplicates first) | write; never changes existing contacts |
@@ -88,7 +89,7 @@ The extension's interface (tool titles, descriptions, error messages) is in Engl
 | **`set_message_flags`** | Mark mails read/unread or flagged/not flagged | **write**, only these two marks |
 | **`trash_message`** | Move mails to the Trash | **move** (see below) |
 
-Events with attendees and events organized by someone else are never changed. For recurring series, only the whole series can be changed or deleted, not single occurrences.
+Events with attendees and events organized by someone else are never changed or moved. For recurring series, a single occurrence can be changed (`occurrence_start`) and the whole series can be changed, moved or deleted; single occurrences are never deleted.
 
 ### `delete_event`: delete an event
 
@@ -99,7 +100,8 @@ Refused:
 
 - events with attendees or events organized by another person, because iCloud could otherwise send cancellations,
 - events in shared calendars, **even with `shared_calendar`**, which only applies to writing,
-- single occurrences of a series. Only the whole series can be deleted; then `start` is the start of the first event.
+- single occurrences of a series. Only the whole series can be deleted; then `start` is the start of the first event,
+- events as part of a move: see below.
 
 **iCloud itself cannot restore individual deleted events.** That's why there are two ways back:
 
@@ -115,6 +117,12 @@ Required: the contact's `id` and `name` (checked against the stored contact; if 
 - Before writing, the card is saved as a `.vcf` file in `~/Library/Application Support/icloud-mcp/contacts-backup/` (90 days, at most 200 files, readable only by you). If the backup fails, nothing is changed. To restore, import the `.vcf` in Apple Contacts.
 - Writing uses `If-Match` on the ETag. Contacts and groups are never deleted, and group cards are never written.
 - `create_contact` refuses to create a contact when one with the same email address, phone number (last 8 digits) or full name exists, and returns the matches instead (unless `allow_duplicate` is true).
+
+### `update_event`: single occurrences, moving to another calendar; `import_invitation`
+
+- **One occurrence of a series:** with `occurrence_start` (the occurrence's start exactly as `list_events` shows it in `occurrenceStart`), only that occurrence changes: title, start/end, location, notes, alerts. It is stored as an exception (an override with `RECURRENCE-ID`) inside the same event; the series and the other exceptions stay as they are. Refused for events with attendees or another organizer, shared calendars without `shared_calendar`, and occurrences the series doesn't have (also deleted ones). A single occurrence can be moved to another time, but not deleted.
+- **Move to another calendar:** `move_to_calendar` names one of your **private** calendars (a shared target only together with its exact name in `shared_calendar`). It is a step of its own (no other fields in the same call). First an `.ics` backup is saved, then the event is created in the target calendar and read back and compared, and only then is the original deleted with `If-Match`. If the deletion fails, both places are reported and nothing more happens. Refused: out of shared calendars, events with attendees or another organizer, single occurrences. If the target calendar doesn't accept the old UID, the event gets a new one.
+- **`import_invitation`** (mail `id`, `attachment_id` of the `.ics`, optional private `calendar`) creates your own event from an invitation: title, time, location, description, recurrence and reminders. Attendees, organizer and method are removed; the organizer appears only as text in the notes. **No reply is sent to the sender.** If an event with the same UID (or an earlier import of this invitation) exists in any calendar, nothing is created and the existing event is returned. A series with changed occurrences is imported completely or refused.
 
 ### `trash_message`: move mails to the Trash
 
@@ -152,7 +160,7 @@ For this project that means: reading, creating events and drafts work in schedul
 
 1. Download the new `.mcpb` from the releases page and open it with a double-click, as during installation. The extension keeps its internal identifier (`icloud-connector`), so no second extension is created.
 2. Check in *Settings > Extensions* that the fields are still filled in. **Anthropic doesn't document whether settings are kept when installing over an existing version.** Claude Desktop stores them separately from the program files, but keep the app-specific password at hand or create a new one, just in case.
-3. Check the permissions: `delete_event`, `trash_message`, `update_contact`, `move_message` and `set_message_flags` set to require approval, and set any newly added tools deliberately.
+3. Check the permissions: `delete_event`, `trash_message`, `update_event`, `update_contact`, `move_message` and `set_message_flags` set to require approval, and set any newly added tools deliberately.
 
 Since version 0.2.1 the extension is called **iClaude** in Claude Desktop; before that it was "iCloud: Kalender, Kontakte, Mail". Please update saved tasks or instructions that use the old name.
 
@@ -179,7 +187,7 @@ Since version 0.2.1 the extension is called **iClaude** in Claude Desktop; befor
 | Calendars work but mail doesn't (or vice versa) | The two user names are swapped or one is missing. Calendar and Contacts sign in with the Apple ID, Mail with the `@icloud.com` address. |
 | "Calendar … not found" when creating an event | The default calendar is misspelled, belongs to a reminders list or no longer exists. The error message lists the private calendars; enter one of them in *Settings > Extensions > iClaude*. |
 | "… is a shared calendar" | Intended. The connector only writes to shared calendars when you name the calendar explicitly, for example "add this to the <name> calendar". A shared calendar is not allowed as the default calendar. |
-| An event can't be changed or deleted | The event has attendees, was organized by someone else, is in a shared calendar (deletion only) or is a single occurrence of a series. The message states the reason. Edit such events yourself in Apple Calendar. |
+| An event can't be changed, moved or deleted | The event has attendees, was organized by someone else, is in a shared calendar (deleting and moving out of it are always refused; changing needs `shared_calendar`) or you asked to delete a single occurrence of a series. The message states the reason. Edit such events yourself in Apple Calendar. |
 | Tools are missing in Claude | Is the extension enabled in *Settings > Extensions*? Quit Claude Desktop completely with ⌘Q and restart it. If that doesn't help, look for status lines such as start, connection and errors in `~/Library/Logs/Claude/mcp-server-*.log`. |
 | No tools from the iPhone | The Mac is asleep or turned off, or Claude Desktop has quit. See [Use from your phone](#use-from-your-phone-and-in-scheduled-tasks). |
 | A scheduled task didn't run | The Mac was asleep at the scheduled time. See [scheduled tasks](#use-from-your-phone-and-in-scheduled-tasks). |

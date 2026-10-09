@@ -46,6 +46,14 @@ export class FakeStore implements CalendarStore {
   private n = 1;
   /** Called after reading, to simulate changes by third parties. */
   afterGet?: (o: RawObject) => void;
+  /** Order of the writing calls, e.g. "create:shared/abc.ics", "delete:priv/abc.ics". */
+  calls: string[] = [];
+  /** Refuse a new object whose UID already exists in another calendar (HTTP 409), like a server with a no-uid-conflict rule. */
+  rejectSameUid = false;
+  /** Make the next delete fail with this error. */
+  deleteError?: Error;
+  /** Alter what the server stores on create (to simulate a server that changes data). */
+  onCreate?: (data: string) => string;
 
   constructor(private readonly cals: CalendarInfo[] = calendars) {}
 
@@ -58,10 +66,12 @@ export class FakeStore implements CalendarStore {
   async listCalendars() {
     return this.cals;
   }
-  async fetchObjects() {
+  async fetchObjects(calendar?: CalendarInfo) {
     this.queries++;
-    // A query deliberately returns only a partial copy without the unknown properties.
-    const partial = [...this.objects.values()].map((o) => ({ ...o, data: o.data.replace(/^X-[^\r\n]*\r\n/gm, '') }));
+    // A query deliberately returns only a partial copy without the unknown properties (except the ones the real query asks for).
+    const partial = [...this.objects.values()]
+      .filter((o) => !calendar || o.url.startsWith(calendar.url))
+      .map((o) => ({ ...o, data: o.data.replace(/^X-(?!ICLAUDE-SOURCE-UID)[^\r\n]*\r\n/gm, '') }));
     return { objects: partial, truncated: false };
   }
   async getObject(_c: CalendarInfo, url: string) {
@@ -72,9 +82,15 @@ export class FakeStore implements CalendarStore {
   }
   async createObject(grant: WriteGrant, filename: string, ics: string) {
     if (!WriteGrant.isValid(grant, 'create')) throw new Error('Write access without grant');
-    this.creates++;
     const url = new URL(filename, grant.calendar.url).href;
-    const o = { url, etag: `"e${this.n++}"`, data: ics };
+    if (this.objects.has(url)) throw new UserError('The event already exists.', 412);
+    const uid = /^UID:(.*)$/m.exec(ics)?.[1]?.trim();
+    if (this.rejectSameUid && uid && [...this.objects.values()].some((x) => new RegExp(`^UID:${uid}\\r?$`, 'm').test(x.data))) {
+      throw new UserError('iCloud refused to save the event because of a conflict.', 409);
+    }
+    this.creates++;
+    this.calls.push(`create:${url.split('/calendars/')[1]}`);
+    const o = { url, etag: `"e${this.n++}"`, data: this.onCreate ? this.onCreate(ics) : ics };
     this.objects.set(url, o);
     return { ...o };
   }
@@ -91,6 +107,8 @@ export class FakeStore implements CalendarStore {
   async deleteObject(grant: WriteGrant, obj: { url: string; etag: string }) {
     if (!WriteGrant.isValid(grant, 'delete')) throw new Error('Delete access without grant');
     this.lastDelete = { url: obj.url, etag: obj.etag };
+    this.calls.push(`delete:${obj.url.split('/calendars/')[1]}`);
+    if (this.deleteError) throw this.deleteError;
     const cur = this.objects.get(obj.url);
     if (!cur) throw new UserError('The event was not found.');
     if (cur.etag !== obj.etag) throw new UserError('The event has changed in the meantime. Nothing was deleted.');

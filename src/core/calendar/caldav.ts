@@ -20,6 +20,8 @@ const MAX_OBJECTS_PER_CALENDAR = 3000;
 const EVENT_PROPS = [
   'UID', 'SUMMARY', 'DTSTART', 'DTEND', 'DURATION', 'RRULE', 'RDATE', 'EXDATE', 'RECURRENCE-ID',
   'LOCATION', 'DESCRIPTION', 'STATUS', 'TRANSP', 'ORGANIZER', 'ATTENDEE', 'SEQUENCE',
+  // set by import_invitation: finds an invitation that was imported before
+  'X-ICLAUDE-SOURCE-UID',
 ] as const;
 const ALARM_PROPS = ['ACTION', 'TRIGGER'] as const;
 const named = (name: string) => ({ _attributes: { name } });
@@ -313,9 +315,10 @@ function deleteError(status: number): UserError {
 }
 
 function writeError(status: number): UserError {
-  if (status === 412) return new UserError('The event has changed in the meantime (or already exists). Please reload it and make the change again.');
-  if (status === 401) return new UserError('Sign-in to iCloud failed. Check the Apple ID and app-specific password.');
-  if (status === 403) return new UserError('iCloud refuses write access to this calendar. Please check in Apple Calendar that you have write access there.');
-  if (status === 404) return new UserError('The event or calendar was not found. Please fetch the event ID again with list_events or search_events.');
-  return new UserError(`iCloud rejected the save (HTTP ${status}). Please check the input and try again; if the error persists, create the event in Apple Calendar.`);
+  if (status === 412) return new UserError('The event has changed in the meantime (or already exists). Please reload it and make the change again.', status);
+  if (status === 401) return new UserError('Sign-in to iCloud failed. Check the Apple ID and app-specific password.', status);
+  if (status === 403) return new UserError('iCloud refuses write access to this calendar. Please check in Apple Calendar that you have write access there.', status);
+  if (status === 404) return new UserError('The event or calendar was not found. Please fetch the event ID again with list_events or search_events.', status);
+  if (status === 409) return new UserError('iCloud refused to save the event because of a conflict (for example the same UID already exists elsewhere).', status);
+  return new UserError(`iCloud rejected the save (HTTP ${status}). Please check the input and try again; if the error persists, create the event in Apple Calendar.`, status);
 }

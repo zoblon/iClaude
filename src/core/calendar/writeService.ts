@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
 import type { Config } from '../config.js';
 import { UserError } from '../errors.js';
-import { authorizeCreate, authorizeDelete, authorizeUpdate } from '../permissions.js';
+import { authorizeCreate, authorizeDelete, authorizeEventMove, authorizeUpdate } from '../permissions.js';
 import { clip, sameText } from '../untrusted.js';
 import type { BackupStore } from './backup.js';
-import { applyPatch, analyzeEvent, buildEventIcs, currentTimes, describeEvent, type RecurrenceInput, type RestorableEvent } from './ics.js';
+import { applyOccurrencePatch, applyPatch, analyzeEvent, buildEventIcs, currentTimes, describeEvent, locateOccurrence, withNewUid, type RecurrenceInput, type RestorableEvent } from './ics.js';
 import { expandObject } from './events.js';
 import { toView, type EventView } from './service.js';
 import type { CalendarInfo, CalendarStore, RawObject } from './types.js';
@@ -36,8 +37,10 @@ export interface UpdateInput {
   notes?: string | undefined;
   alertsMinutes?: number[] | undefined;
   sharedCalendar?: string | undefined;
-  /** Only for a clear refusal: single occurrences are not changed. */
+  /** Start of one occurrence of a series (as list_events shows it in occurrenceStart): only that occurrence is changed. */
   occurrenceStart?: string | undefined;
+  /** Name of another calendar: moves the whole event there (a step of its own, no other changes in the same call). */
+  moveToCalendar?: string | undefined;
 }
 
 export interface DeleteInput {
@@ -66,7 +69,21 @@ export interface WriteResult {
   calendar: string;
   shared: boolean;
   changed?: string[];
+  /** Only for a move to another calendar. */
+  moved?: {
+    from: string;
+    to: string;
+    /** ID of the event before the move (no longer valid). */
+    oldId: string;
+    /** The target calendar did not accept the old UID, so the event got a new one. */
+    uidChanged: boolean;
+    backup: { file: string; path: string; folder: string };
+    prunedBackups: number;
+  };
 }
+
+/** HTTP statuses with which a server can refuse an event because of its content or a UID conflict. */
+const CONTENT_REFUSALS = new Set([400, 403, 409, 412, 422]);
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -136,6 +153,7 @@ export class CalendarWriteService {
   }
 
   async updateEvent(a: UpdateInput): Promise<WriteResult> {
+    if (a.moveToCalendar !== undefined) return this.moveEvent(a);
     const zone = this.cfg.timezone;
     const touchesTime = a.start !== undefined || a.end !== undefined || a.allDay !== undefined;
     const touchesAny = touchesTime || a.title !== undefined || a.location !== undefined || a.notes !== undefined || a.alertsMinutes !== undefined;
@@ -162,27 +180,142 @@ export class CalendarWriteService {
     }
 
     let time: { start: DateTime; end: DateTime; allDay: boolean } | undefined;
+    const patch = { title: a.title?.trim(), location: a.location?.trim(), notes: a.notes?.trim(), alertsMinutes: a.alertsMinutes, zone };
+
+    if (a.occurrenceStart) {
+      // One occurrence of a series: an override with RECURRENCE-ID is written; the series and the other overrides stay as they are.
+      const loc = locateOccurrence(current.data, a.occurrenceStart, zone);
+      if (a.allDay !== undefined && a.allDay !== loc.allDay) {
+        throw new UserError('A single occurrence cannot be switched between all-day and timed. Change the whole series for that.');
+      }
+      if (touchesTime) time = this.resolveTime(a, { startMs: loc.startMs, endMs: loc.endMs, allDay: loc.allDay }, zone);
+      const data = applyOccurrencePatch(current.data, loc, { ...patch, time });
+      const saved = await this.store.updateObject(grant, { url, etag: current.etag, data });
+      const startMs = time ? time.start.toMillis() : loc.startMs;
+      const endMs = time ? (time.allDay ? time.end.plus({ days: 1 }).toMillis() : time.end.toMillis()) : loc.endMs;
+      const r = expandObject(saved, calendar, { zone, rangeStartMs: startMs, rangeEndMs: Math.max(endMs, startMs + 1) });
+      const hit = r.events.find((e) => e.occurrenceStart === loc.key) ?? r.events[0];
+      if (!hit) throw new UserError('The change was saved but the occurrence could not be read back. Please check with list_events.');
+      return { event: toView(hit), calendar: calendar.name, shared: calendar.shared, changed: this.changedFields(a, touchesTime).concat('occurrence') };
+    }
+
     if (touchesTime) time = this.resolveTime(a, currentTimes(current.data, zone), zone);
 
-    const data = applyPatch(current.data, {
-      title: a.title?.trim(),
-      location: a.location?.trim(),
-      notes: a.notes?.trim(),
-      time,
-      alertsMinutes: a.alertsMinutes,
-      zone,
-    });
+    const data = applyPatch(current.data, { ...patch, time });
     const saved = await this.store.updateObject(grant, { url, etag: current.etag, data });
 
     const t = currentTimes(saved.data, zone);
-    const changed = [
+    return { event: this.firstView(saved, calendar, t.startMs, t.endMs), calendar: calendar.name, shared: calendar.shared, changed: this.changedFields(a, touchesTime) };
+  }
+
+  private changedFields(a: UpdateInput, touchesTime: boolean): string[] {
+    return [
       ...(a.title !== undefined ? ['title'] : []),
       ...(touchesTime ? ['time'] : []),
       ...(a.location !== undefined ? ['location'] : []),
       ...(a.notes !== undefined ? ['notes'] : []),
       ...(a.alertsMinutes !== undefined ? ['alerts'] : []),
     ];
-    return { event: this.firstView(saved, calendar, t.startMs, t.endMs), calendar: calendar.name, shared: calendar.shared, changed };
+  }
+
+  /**
+   * Moves an event to another calendar. Order:
+   *  1. permissions (not out of a shared calendar, no attendees, no foreign organizer, whole series only, shared target only when named),
+   *  2. .ics backup of the event (if it fails, nothing happens),
+   *  3. create in the target calendar (same UID; if the server refuses that, a new UID) and read back and compare,
+   *  4. only then delete the source with If-Match on its ETag.
+   * If the deletion fails, both places are reported and nothing more is done.
+   */
+  private async moveEvent(a: UpdateInput): Promise<WriteResult> {
+    const zone = this.cfg.timezone;
+    if (!this.backup) throw new UserError('Moving is not set up (no backup folder). Nothing was moved.');
+    if (a.title !== undefined || a.start !== undefined || a.end !== undefined || a.allDay !== undefined || a.location !== undefined || a.notes !== undefined || a.alertsMinutes !== undefined) {
+      throw new UserError('Moving an event to another calendar is a step of its own. Call update_event with move_to_calendar alone, and change title, time or other fields in a separate call.');
+    }
+    const target = a.moveToCalendar!.trim();
+    if (!target) throw new UserError('move_to_calendar must name a calendar.');
+
+    const { calendar, url } = await this.locate(a.id);
+    const current = await this.store.getObject(calendar, url);
+    if (!current) throw new UserError('Event not found. It may have been deleted or moved.');
+    const facts = analyzeEvent(current.data);
+    const calendars = await this.store.listCalendars();
+    const grants = authorizeEventMove({ calendars, source: calendar, facts, selfAddresses: this.selfAddresses, target, sharedCalendar: a.sharedCalendar, occurrenceStart: a.occurrenceStart });
+
+    if (!current.etag) throw new UserError('The server returns no ETag for this event, so nothing is moved for safety reasons. Please move the event in Apple Calendar.');
+    if (a.etag && normEtag(a.etag) !== normEtag(current.etag)) {
+      throw new UserError('The event has changed since it was fetched. Nothing was moved. Please reload the event (list_events) and try again.');
+    }
+    const restore = describeEvent(current.data, zone);
+    if (!facts.uid) throw new UserError('The event has no UID. Nothing was moved.');
+
+    const saved = await this.backup.save(restore.title, current.data);
+
+    // Create the copy: same UID and file name first; a different UID only if the server refuses that.
+    const base = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
+    const fileOk = /^[A-Za-z0-9-]{8,64}\.ics$/.test(base);
+    let created: RawObject;
+    let uid = facts.uid;
+    let uidChanged = false;
+    try {
+      created = await this.store.createObject(grants.create, fileOk ? base : `${/^[A-Za-z0-9-]{8,64}$/.test(uid) ? uid : randomUUID().toUpperCase()}.ics`, current.data);
+    } catch (e) {
+      if (!(e instanceof UserError) || e.status === undefined || !CONTENT_REFUSALS.has(e.status)) {
+        await this.backup.discard(saved);
+        throw e;
+      }
+      uid = randomUUID().toUpperCase();
+      try {
+        created = await this.store.createObject(grants.create, `${uid}.ics`, withNewUid(current.data, uid));
+        uidChanged = true;
+      } catch (e2) {
+        await this.backup.discard(saved);
+        throw new UserError(`The event could not be created in "${grants.target.name}", so it was not moved and nothing was changed: ${e2 instanceof Error ? e2.message : 'unexpected error'}`);
+      }
+    }
+
+    // Read back and compare before anything is deleted.
+    const problem = this.copyProblem(restore, created, uid, current.data, zone);
+    if (problem) {
+      throw new UserError(
+        `The copy in "${grants.target.name}" does not match the original (${problem}), so the original was NOT deleted. The event now exists in both "${calendar.name}" and "${grants.target.name}". Nothing else was done. Please check in Apple Calendar.`,
+      );
+    }
+
+    try {
+      await this.store.deleteObject(grants.delete, { url, etag: current.etag });
+    } catch (e) {
+      throw new UserError(
+        `The event was copied to "${grants.target.name}" but could not be removed from "${calendar.name}" (${e instanceof Error ? e.message : 'unexpected error'}). It now exists in both calendars. Nothing else was done; please remove one of them in Apple Calendar. A backup is in ${saved.path}.`,
+      );
+    }
+    const prunedBackups = await this.backup.prune();
+    const t = currentTimes(created.data, zone);
+    return {
+      event: this.firstView(created, grants.target, t.startMs, t.endMs),
+      calendar: grants.target.name,
+      shared: grants.target.shared,
+      changed: ['calendar'],
+      moved: { from: calendar.name, to: grants.target.name, oldId: a.id, uidChanged, backup: { ...saved, folder: this.backup.dir }, prunedBackups },
+    };
+  }
+
+  /** What differs between the original and the copy read back from the target calendar (undefined = identical in everything that matters). */
+  private copyProblem(orig: RestorableEvent, created: RawObject, uid: string, origData: string, zone: string): string | undefined {
+    try {
+      const f = analyzeEvent(created.data);
+      if (f.uid !== uid) return 'UID';
+      if (f.hasAttendees) return 'attendees appeared';
+      const a = describeEvent(created.data, zone);
+      for (const k of ['title', 'start', 'end', 'allDay', 'location', 'notes', 'recurrenceRule'] as const) {
+        if (JSON.stringify(a[k] ?? null) !== JSON.stringify(orig[k] ?? null)) return k;
+      }
+      const count = (d: string) => (d.match(/^BEGIN:VEVENT/gm) ?? []).length;
+      if (count(created.data) !== count(origData)) return 'number of occurrences/overrides';
+      return undefined;
+    } catch {
+      return 'the copy could not be read';
+    }
   }
 
   /** Calendar and URL of the event from the ID (only paths inside known calendars). */

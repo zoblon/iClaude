@@ -12,7 +12,7 @@ Die Oberfläche der Erweiterung ist auf Englisch: Werkzeugtitel, Beschreibungen,
 
 - **Sendet nie.** Mails werden nur als Entwurf im Ordner »Entwürfe« angelegt. Du prüfst und sendest sie selbst in Apple Mail.
 - **Löscht Mails nie endgültig.** `trash_message` verschiebt sie in den Papierkorb, dort sind sie etwa 30 Tage wiederherstellbar.
-- **Löscht nur eigene Termine und nur mit Sicherung.** `delete_event` legt vorher eine `.ics`-Sicherung an und liefert den Termin vollständig zurück.
+- **Löscht nur eigene Termine und nur mit Sicherung.** `delete_event` legt vorher eine `.ics`-Sicherung an und liefert den Termin vollständig zurück. Beim Verschieben in einen anderen Kalender wird das Original erst entfernt, nachdem die Kopie angelegt und gegengelesen wurde; auch dabei gibt es vorher eine `.ics`-Sicherung.
 - **Schreibt in geteilte Kalender nur auf ausdrückliche Nennung.** Kontakte werden nur auf Anfrage angelegt oder geändert (`update_contact` sichert die Karte vorher) und nie gelöscht. Einladungen und Teilnehmer gibt es nicht.
 
 <details>
@@ -69,7 +69,7 @@ Hinweise:
    | Default calendar for new events | Name eines **privaten Termin-Kalenders**, zum Beispiel `Termine`. Keine Erinnerungsliste und kein geteilter Kalender. Leer lassen geht auch, dann muss jeder neue Termin einen Kalender nennen. |
 
 4. Die Erweiterung einschalten.
-5. **Die Löschwerkzeuge, `update_contact`, `move_message` und `set_message_flags` auf »Nachfragen« stellen:** unter *Einstellungen → Erweiterungen* (je nach Version *Anpassen → Konnektoren*) bei **iClaude** die Werkzeuge `delete_event`, `trash_message`, `update_contact`, `move_message` und `set_message_flags`. Dann fragt Claude vor jedem Löschen, Ändern eines Kontakts, Verschieben oder Markieren nach und zeigt Titel und Startzeit, Betreff und Absender bzw. den Namen des Kontakts.
+5. **Die Löschwerkzeuge, `update_event`, `update_contact`, `move_message` und `set_message_flags` auf »Nachfragen« stellen:** unter *Einstellungen → Erweiterungen* (je nach Version *Anpassen → Konnektoren*) bei **iClaude** die Werkzeuge `delete_event`, `trash_message`, `update_event`, `update_contact`, `move_message` und `set_message_flags`. Dann fragt Claude vor jedem Löschen, Ändern, Verschieben oder Markieren nach. (`update_event` deckt auch das Verschieben eines Termins in einen anderen Kalender ab, wobei das Original im alten Kalender entfernt wird.)
 6. Testen, zum Beispiel mit »Welche Kalender siehst du?« und »Was steht diese Woche an?«. Geteilte Kalender sind in der Antwort als geteilt markiert.
 
 ## Werkzeuge
@@ -77,7 +77,8 @@ Hinweise:
 | Werkzeug | Zweck | Rechte |
 |---|---|---|
 | `list_calendars`, `list_events`, `search_events`, `find_free_slots` | Kalender lesen | nur lesen |
-| `create_event`, `update_event` | Termine anlegen und ändern | schreiben; geteilte Kalender nur mit `shared_calendar`; keine Teilnehmer |
+| `create_event`, `update_event` | Termine anlegen und ändern, ein einzelnes Vorkommen einer Serie ändern, einen Termin in einen anderen Kalender verschieben | schreiben; geteilte Kalender nur mit `shared_calendar`; keine Teilnehmer; ein Verschieben entfernt das Original (siehe unten) |
+| `import_invitation` | Einladung aus einer Mail als eigenen Termin übernehmen | schreiben, nur in einem privaten Kalender; keine Teilnehmer, keine Antwort |
 | **`delete_event`** | eigenen Termin löschen | **löschen** (siehe unten) |
 | `search_contacts`, `get_contact`, `list_contact_groups`, `upcoming_contact_dates` | Kontakte, Gruppen und anstehende Geburtstage und Jahrestage lesen | nur lesen |
 | `create_contact` | einen Kontakt anlegen (prüft vorher auf Dubletten) | schreiben; ändert nie vorhandene Kontakte |
@@ -88,7 +89,7 @@ Hinweise:
 | **`set_message_flags`** | Mails als gelesen/ungelesen oder markiert/nicht markiert setzen | **schreiben**, nur diese beiden Markierungen |
 | **`trash_message`** | Mails in den Papierkorb verschieben | **verschieben** (siehe unten) |
 
-Termine mit Teilnehmern oder von anderen organisierte Termine werden nie geändert. Bei Serien lässt sich nur die ganze Serie ändern oder löschen, keine einzelnen Vorkommen.
+Termine mit Teilnehmern oder von anderen organisierte Termine werden nie geändert oder verschoben. Bei Serien lässt sich ein einzelnes Vorkommen ändern (`occurrence_start`), die ganze Serie ändern, verschieben oder löschen; einzelne Vorkommen werden nie gelöscht.
 
 ### `delete_event`: Termin löschen
 
@@ -99,7 +100,8 @@ Abgelehnt werden:
 
 - Termine mit Teilnehmern oder von einer anderen Person organisierte Termine, weil iCloud sonst Absagen verschicken könnte,
 - Termine in geteilten Kalendern, **auch mit `shared_calendar`**, das gilt nur fürs Schreiben,
-- einzelne Vorkommen einer Serie. Nur die ganze Serie lässt sich löschen, dann ist `start` der Beginn des ersten Termins.
+- einzelne Vorkommen einer Serie. Nur die ganze Serie lässt sich löschen, dann ist `start` der Beginn des ersten Termins,
+- Termine als Teil eines Verschiebens: siehe unten.
 
 **iCloud selbst kann einzelne gelöschte Termine nicht wiederherstellen.** Deshalb gibt es zwei Wege zurück:
 
@@ -115,6 +117,12 @@ Pflicht: `id` und `name` des Kontakts (wird gegen den gespeicherten Kontakt gepr
 - Vor dem Schreiben wird die Karte als `.vcf` in `~/Library/Application Support/icloud-mcp/contacts-backup/` gesichert (90 Tage, höchstens 200 Dateien, nur für dich lesbar). Scheitert die Sicherung, wird nichts geändert. Zum Wiederherstellen die `.vcf` in Apple Kontakte importieren.
 - Geschrieben wird mit `If-Match` auf das ETag. Kontakte und Gruppen werden nie gelöscht, Gruppenkarten nie beschrieben.
 - `create_contact` legt keinen Kontakt an, wenn es schon einen mit gleicher E-Mail-Adresse, Telefonnummer (letzte 8 Ziffern) oder gleichem vollständigen Namen gibt, und liefert stattdessen die Treffer (außer bei `allow_duplicate: true`).
+
+### `update_event`: einzelne Vorkommen, Verschieben in einen anderen Kalender; `import_invitation`
+
+- **Ein Vorkommen einer Serie:** mit `occurrence_start` (Beginn des Vorkommens genau so, wie `list_events` ihn in `occurrenceStart` zeigt) ändert sich nur dieses Vorkommen: Titel, Beginn/Ende, Ort, Notizen, Erinnerungen. Es wird als Ausnahme (Override mit `RECURRENCE-ID`) im selben Termin gespeichert; die Serie und die anderen Ausnahmen bleiben unverändert. Verweigert bei Terminen mit Teilnehmern oder fremdem Organisator, geteilten Kalendern ohne `shared_calendar` und Vorkommen, die es in der Serie nicht gibt (auch gelöschten). Ein einzelnes Vorkommen lässt sich verschieben, aber nicht löschen.
+- **In einen anderen Kalender verschieben:** `move_to_calendar` nennt einen deiner **privaten** Kalender (ein geteilter Zielkalender nur zusammen mit seinem genauen Namen in `shared_calendar`). Das ist ein eigener Schritt (keine anderen Felder im selben Aufruf). Zuerst wird eine `.ics`-Sicherung angelegt, dann der Termin im Zielkalender angelegt, gegengelesen und verglichen, und erst danach das Original mit `If-Match` gelöscht. Scheitert das Löschen, werden beide Orte gemeldet und nichts weiter getan. Verweigert: aus geteilten Kalendern heraus, Termine mit Teilnehmern oder fremdem Organisator, einzelne Vorkommen. Akzeptiert der Zielkalender die alte UID nicht, bekommt der Termin eine neue.
+- **`import_invitation`** (`id` der Mail, `attachment_id` der `.ics`, optional privater `calendar`) legt aus einer Einladung einen eigenen Termin an: Titel, Zeit, Ort, Beschreibung, Wiederholung und Erinnerungen. Teilnehmer, Organisator und Methode werden entfernt; der Organisator steht nur als Text in den Notizen. **An den Absender geht keine Antwort.** Gibt es in irgendeinem Kalender schon einen Termin mit derselben UID (oder einen früheren Import dieser Einladung), wird nichts angelegt, sondern der vorhandene gemeldet. Eine Serie mit geänderten Vorkommen wird vollständig übernommen oder abgelehnt.
 
 ### `trash_message`: Mails in den Papierkorb
 
@@ -152,7 +160,7 @@ Für dieses Projekt heißt das: Lesen, Termine anlegen und Entwürfe funktionier
 
 1. Die neue `.mcpb` von der Release-Seite herunterladen und wie bei der Installation per Doppelklick öffnen. Die Erweiterung behält ihre interne Kennung (`icloud-connector`), es entsteht also keine zweite Erweiterung.
 2. Unter *Einstellungen → Erweiterungen* prüfen, ob die Felder noch gefüllt sind. **Anthropic dokumentiert nicht, ob die Einstellungen beim Überinstallieren erhalten bleiben.** Claude Desktop speichert sie zwar getrennt von den Programmdateien, halte zur Sicherheit aber das App-Passwort bereit oder erstelle ein neues.
-3. Die Freigaben prüfen: `delete_event`, `trash_message`, `update_contact`, `move_message` und `set_message_flags` auf »Nachfragen«, neu hinzugekommene Werkzeuge bewusst einstellen.
+3. Die Freigaben prüfen: `delete_event`, `trash_message`, `update_event`, `update_contact`, `move_message` und `set_message_flags` auf »Nachfragen«, neu hinzugekommene Werkzeuge bewusst einstellen.
 
 Seit Version 0.2.1 heißt die Erweiterung in Claude Desktop **iClaude**, vorher »iCloud: Kalender, Kontakte, Mail«. Gespeicherte Aufgaben oder Anweisungen, die den alten Namen nennen, bitte anpassen.
 
@@ -179,7 +187,7 @@ Seit Version 0.2.1 heißt die Erweiterung in Claude Desktop **iClaude**, vorher 
 | Kalender gehen, Mail nicht (oder umgekehrt) | Die beiden Benutzernamen sind vertauscht oder einer fehlt. Kalender und Kontakte melden sich mit der Apple-ID an, Mail mit der `@icloud.com`-Adresse. |
 | »Calendar … not found« beim Anlegen | Der Standardkalender ist falsch geschrieben, gehört zu einer Erinnerungsliste oder existiert nicht mehr. Die Fehlermeldung nennt die privaten Kalender, einen davon unter *Einstellungen → Erweiterungen → iClaude* eintragen. |
 | »… is a shared calendar« | Gewollt. In geteilte Kalender schreibt der Konnektor nur, wenn du den Kalender ausdrücklich nennst, etwa »trag das in den Kalender <Name> ein«. Als Standardkalender ist ein geteilter Kalender nicht erlaubt. |
-| Termin lässt sich nicht ändern oder löschen | Der Termin hat Teilnehmer, wurde von jemand anderem organisiert, liegt in einem geteilten Kalender (nur beim Löschen) oder ist ein einzelnes Vorkommen einer Serie. Die Meldung nennt den Grund. Solche Termine in Apple Kalender selbst bearbeiten. |
+| Termin lässt sich nicht ändern, verschieben oder löschen | Der Termin hat Teilnehmer, wurde von jemand anderem organisiert, liegt in einem geteilten Kalender (Löschen und Verschieben daraus werden immer verweigert; Ändern braucht `shared_calendar`) oder du wolltest ein einzelnes Vorkommen einer Serie löschen. Die Meldung nennt den Grund. Solche Termine in Apple Kalender selbst bearbeiten. |
 | Werkzeuge fehlen in Claude | Ist die Erweiterung unter *Einstellungen → Erweiterungen* eingeschaltet? Claude Desktop mit ⌘Q ganz beenden und neu starten. Hilft das nicht, in `~/Library/Logs/Claude/mcp-server-*.log` nach Statuszeilen wie Start, Verbindung und Fehler schauen. |
 | Vom iPhone aus keine Werkzeuge | Der Mac schläft, ist aus oder Claude Desktop ist beendet. Siehe [Nutzung vom Handy](#nutzung-vom-handy-und-in-geplanten-aufgaben). |
 | Geplante Aufgabe ist nicht gelaufen | Der Mac hat zur geplanten Zeit geschlafen. Siehe [geplante Aufgaben](#nutzung-vom-handy-und-in-geplanten-aufgaben). |
